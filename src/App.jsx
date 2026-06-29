@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react'
-import { doctors as rawDoctors, DEFAULTS, SNAPSHOT_DATE, SOURCE } from './data/doctors.js'
+import { useEffect, useMemo, useState } from 'react'
+import { DEFAULTS, SOURCE } from './data/doctors.js'
+import { loadDoctors } from './data/source.js'
 import { validate } from './validation/rules.js'
 import { IconShield, IconRefresh } from './components/icons.jsx'
 import KpiCards from './components/KpiCards.jsx'
@@ -8,14 +9,20 @@ import IssuesPanel from './components/IssuesPanel.jsx'
 import DoctorTable from './components/DoctorTable.jsx'
 import DoctorDrawer from './components/DoctorDrawer.jsx'
 
-// Merge the batch-constant fields into every record so the full doctype field
-// set is available to the UI. Validation is unaffected (rules read named fields).
-const enriched = rawDoctors.map((d) => ({ ...DEFAULTS, ...d }))
-
 const EMPTY_FILTERS = { specialty: '', category: '', territory: '', check: '' }
 
 export default function App() {
-  const result = useMemo(() => validate(enriched), [])
+  const [feed, setFeed] = useState({ doctors: [], mode: 'loading', fetchedAt: null, source: SOURCE })
+  const [refreshing, setRefreshing] = useState(true)
+
+  const refresh = () => {
+    setRefreshing(true)
+    loadDoctors().then((f) => { setFeed(f); setRefreshing(false) })
+  }
+  useEffect(() => { refresh() }, [])
+
+  // Merge batch-constant defaults so the full field set is present, then validate.
+  const result = useMemo(() => validate(feed.doctors.map((d) => ({ ...DEFAULTS, ...d }))), [feed])
   const { records, totals, byRule } = result
 
   const [query, setQuery] = useState('')
@@ -70,8 +77,11 @@ export default function App() {
           </div>
         </div>
         <div className="header__meta">
-          <span className="env-badge"><span className="dot" />ERPNext UAT</span>
-          <span className="env-badge"><IconRefresh width={14} height={14} />Snapshot {SNAPSHOT_DATE}</span>
+          <ModeBadge mode={feed.mode} fetchedAt={feed.fetchedAt} />
+          <button className="env-badge env-badge--btn" onClick={refresh} disabled={refreshing} title="Re-fetch from ERPNext">
+            <IconRefresh width={14} height={14} className={refreshing ? 'spin' : ''} />
+            {refreshing ? 'Refreshing…' : 'Refresh'}
+          </button>
         </div>
       </header>
 
@@ -100,14 +110,27 @@ export default function App() {
       </div>
 
       <p className="footer-note">
-        Validating <code>{records.length}</code> doctor records · source: {SOURCE}.<br />
-        Checks run live in the browser against the snapshot. Replace <code>src/data/doctors.js</code> with a
-        live fetch to validate straight from ERPNext.
+        Validating <code>{records.length}</code> doctor records · source: {feed.source}.<br />
+        {feed.mode === 'live'
+          ? <>Live from ERPNext{feed.fetchedAt ? ` · fetched ${feed.fetchedAt}` : ''}.</>
+          : feed.mode === 'snapshot'
+            ? <>Showing bundled snapshot{feed.reason ? ` — live fetch unavailable (${feed.reason})` : ''}. Start the proxy (<code>npm run server</code>) with <code>.env</code> configured to go live.</>
+            : <>Loading…</>}
       </p>
 
       {selectedDoctor && <DoctorDrawer doctor={selectedDoctor} onClose={() => setSelected(null)} />}
     </div>
   )
+}
+
+function ModeBadge({ mode, fetchedAt }) {
+  if (mode === 'live') {
+    return <span className="env-badge"><span className="dot" />Live · ERPNext UAT</span>
+  }
+  if (mode === 'snapshot') {
+    return <span className="env-badge"><span className="dot dot--amber" />Snapshot {fetchedAt}</span>
+  }
+  return <span className="env-badge"><span className="dot dot--muted" />Connecting…</span>
 }
 
 function distinct(records, fn) {

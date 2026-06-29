@@ -82,6 +82,13 @@ button { font-family: inherit; cursor: pointer; }
   box-shadow: var(--shadow-sm);
 }
 .env-badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+.env-badge .dot--amber { background: var(--warning); box-shadow: 0 0 0 3px var(--warning-soft); }
+.env-badge .dot--muted { background: var(--text-faint); box-shadow: 0 0 0 3px var(--border); }
+.env-badge--btn { cursor: pointer; }
+.env-badge--btn:hover:not(:disabled) { background: var(--surface-2); border-color: var(--border-strong); }
+.env-badge--btn:disabled { opacity: 0.7; cursor: default; }
+.spin { animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---- generic card ---- */
 .card {

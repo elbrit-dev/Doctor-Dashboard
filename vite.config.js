@@ -6,14 +6,13 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5180,
-    // When wiring up live ERPNext data later, proxy /erpnext to the UAT site
-    // to avoid CORS. Credentials should live on the server side, never in the bundle.
-    // proxy: {
-    //   '/erpnext': {
-    //     target: 'https://your-uat-site.erpnext.com',
-    //     changeOrigin: true,
-    //     rewrite: (p) => p.replace(/^\/erpnext/, ''),
-    //   },
-    // },
+    // Forward /api calls to the local proxy server (server/index.js), which holds
+    // the ERPNext credentials and fetches live data. Credentials never reach the browser.
+    proxy: {
+      '/api': {
+        target: `http://localhost:${process.env.PROXY_PORT || 8787}`,
+        changeOrigin: true,
+      },
+    },
   },
 })
