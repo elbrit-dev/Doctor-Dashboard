@@ -10,23 +10,31 @@ export const SEVERITY = {
   info: { key: 'info', label: 'Info', weight: 2, rank: 1 },
 }
 
-const CANONICAL_STATES = new Set(['Tamil Nadu', 'Kerala', 'Karnataka', 'Andhra Pradesh', 'Telangana'])
-
 const hasValue = (v) => v !== null && v !== undefined && String(v).trim() !== ''
 const isRealPhone = (v) => hasValue(v) && /\d/.test(String(v)) && String(v).replace(/\D/g, '').length >= 10
 
 // ---- Rule definitions -------------------------------------------------------
-// test(doctor, ctx) -> true when the record FAILS (i.e. has the problem).
-// ctx carries cross-record info (e.g. duplicate name index).
+// Presence checks only: each rule answers "is this field filled or empty?".
+// No formatting / standardization / consistency checks — test() -> true when
+// the field is NOT filled.
 
 export const RULES = [
+  {
+    id: 'name_missing',
+    label: 'Missing doctor name',
+    severity: 'error',
+    category: 'Identity',
+    description: 'First name / lead name is blank.',
+    fix: 'Enter the doctor’s name.',
+    test: (d) => !hasValue(d.firstName) || !hasValue(d.leadName),
+  },
   {
     id: 'geo_missing',
     label: 'Missing geo-coordinates',
     severity: 'error',
     category: 'Geo',
-    description: 'Latitude/longitude is 0 or blank — the doctor cannot be placed on the map or routed.',
-    fix: 'Capture the clinic location so latitude and longitude are populated.',
+    description: 'Latitude/longitude is blank or 0 — location not filled.',
+    fix: 'Fill in the clinic latitude and longitude.',
     test: (d) => !hasValue(d.latitude) || !hasValue(d.longitude) || Number(d.latitude) === 0 || Number(d.longitude) === 0,
   },
   {
@@ -34,82 +42,63 @@ export const RULES = [
     label: 'Missing territory',
     severity: 'error',
     category: 'Org',
-    description: 'No territory (HQ) assigned on the lead — breaks territory-based reporting and ownership.',
-    fix: 'Set the territory to match the doctor’s primary HQ.',
+    description: 'No territory (HQ) is filled on the record.',
+    fix: 'Fill in the territory.',
     test: (d) => !hasValue(d.territory),
+  },
+  {
+    id: 'speciality_missing',
+    label: 'Missing speciality',
+    severity: 'warning',
+    category: 'Classification',
+    description: 'Speciality field is blank.',
+    fix: 'Fill in the doctor’s speciality.',
+    test: (d) => !hasValue(d.specialty),
+  },
+  {
+    id: 'qualification_missing',
+    label: 'Missing qualification',
+    severity: 'warning',
+    category: 'Classification',
+    description: 'Qualification field is blank.',
+    fix: 'Fill in the doctor’s qualification.',
+    test: (d) => !hasValue(d.qualification),
   },
   {
     id: 'category_missing',
     label: 'Missing category',
     severity: 'warning',
     category: 'Classification',
-    description: 'custom_category is blank — doctor is not graded (C / SC / E / K / P30 …).',
-    fix: 'Assign the correct doctor category.',
+    description: 'Category is blank.',
+    fix: 'Fill in the doctor category.',
     test: (d) => !hasValue(d.category),
   },
   {
     id: 'contact_missing',
-    label: 'No usable contact number',
+    label: 'Missing contact number',
     severity: 'warning',
     category: 'Contact',
-    description: 'Mobile / phone / WhatsApp are all blank or placeholder "0" — no way to reach the doctor.',
-    fix: 'Add a valid 10-digit mobile number.',
+    description: 'Mobile / phone / WhatsApp are all blank or placeholder "0".',
+    fix: 'Fill in a valid contact number.',
     test: (d) => !(isRealPhone(d.mobile) || isRealPhone(d.phone) || isRealPhone(d.whatsapp)),
   },
   {
-    id: 'name_whitespace',
-    label: 'Name has stray whitespace',
-    severity: 'warning',
-    category: 'Naming',
-    description: 'First name / lead name has leading or trailing spaces — causes duplicate-looking records and bad search.',
-    fix: 'Trim the name fields.',
-    test: (d) => d.firstName !== d.firstName.trim() || d.leadName !== d.leadName.trim(),
-  },
-  {
-    id: 'duplicate_name',
-    label: 'Possible duplicate name',
-    severity: 'warning',
-    category: 'Naming',
-    description: 'Another record shares the same doctor name — may be a duplicate entry.',
-    fix: 'Confirm whether the records are the same doctor and merge if so.',
-    test: (d, ctx) => (ctx.nameCounts.get(d.leadName.trim().toLowerCase()) || 0) > 1,
-  },
-  {
-    id: 'territory_hq_mismatch',
-    label: 'Territory ≠ role-profile HQ',
-    severity: 'warning',
-    category: 'Org',
-    description: 'The lead’s territory does not match the HQ on one or more of its role profiles.',
-    fix: 'Align the lead territory with the role-profile HQ (or vice-versa).',
-    test: (d) => hasValue(d.territory) && d.roleProfiles.length > 0 &&
-      d.roleProfiles.some((r) => hasValue(r.hq) && r.hq !== d.territory),
-  },
-  {
-    id: 'state_nonstandard',
-    label: 'Non-standard state value',
+    id: 'city_missing',
+    label: 'Missing city',
     severity: 'warning',
     category: 'Address',
-    description: 'State is stored as a code like "Tn-Chennai" instead of the canonical state name.',
-    fix: 'Normalise the state to its official name (e.g. "Tamil Nadu").',
-    test: (d) => hasValue(d.state) && !CANONICAL_STATES.has(d.state),
+    description: 'City field is blank.',
+    fix: 'Fill in the city.',
+    test: (d) => !hasValue(d.city),
   },
   {
-    id: 'address_not_created',
-    label: 'Address record not created',
-    severity: 'info',
+    id: 'state_missing',
+    label: 'Missing state',
+    severity: 'warning',
     category: 'Address',
-    description: 'custom_address_created is 0 — the linked Address document has not been generated yet.',
-    fix: 'Generate the address record once coordinates and city are confirmed.',
-    test: (d) => Number(d.addressCreated) !== 1,
-  },
-  {
-    id: 'legacy_speciality_field',
-    label: 'Legacy speciality field still set',
-    severity: 'info',
-    category: 'Hygiene',
-    description: 'Both custom_speciality (legacy, misspelled) and custom_specialty are populated — clean up the old field.',
-    fix: 'Remove the legacy custom_speciality value; keep custom_specialty.',
-    test: (d) => hasValue(d.specialityLegacy),
+    description: 'State field is blank.',
+    fix: 'Fill in the state.',
+    test: (d) => !hasValue(d.state),
   },
 ]
 
@@ -118,17 +107,10 @@ export const RULE_BY_ID = Object.fromEntries(RULES.map((r) => [r.id, r]))
 // ---- Engine -----------------------------------------------------------------
 
 export function validate(doctors) {
-  const nameCounts = new Map()
-  for (const d of doctors) {
-    const key = d.leadName.trim().toLowerCase()
-    nameCounts.set(key, (nameCounts.get(key) || 0) + 1)
-  }
-  const ctx = { nameCounts }
-
   const records = doctors.map((d) => {
     const issues = []
     for (const rule of RULES) {
-      if (rule.test(d, ctx)) {
+      if (rule.test(d)) {
         issues.push({ ruleId: rule.id, label: rule.label, severity: rule.severity, category: rule.category, fix: rule.fix })
       }
     }

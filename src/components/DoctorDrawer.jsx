@@ -45,17 +45,17 @@ export default function DoctorDrawer({ doctor, onClose }) {
           <Group title="Identity">
             <Row k="ID (name)" v={doctor.name} mono />
             <Row k="Naming series" v={doctor.namingSeries} />
-            <Row k="Doctor code" v={doctor.code} />
+            <Row k="Doctor code" v={doctor.code} bad={!doctor.code} />
             <Row k="Salutation" v={doctor.salutation} />
-            <Row k="First name" v={doctor.firstName} flag={whitespaceFlag(doctor.firstName)} />
-            <Row k="Lead name" v={doctor.leadName} flag={whitespaceFlag(doctor.leadName)} />
+            <Row k="First name" v={doctor.firstName} bad={!String(doctor.firstName).trim()} />
+            <Row k="Lead name" v={doctor.leadName} bad={!String(doctor.leadName).trim()} />
             <Row k="Title" v={doctor.leadName.trim()} />
           </Group>
 
           <Group title="Classification">
             <Row k="Speciality" v={doctor.specialty} bad={!doctor.specialty} />
-            <Row k="Legacy speciality" v={doctor.specialityLegacy} warn={!!doctor.specialityLegacy} />
-            <Row k="Qualification" v={doctor.qualification} />
+            <Row k="Legacy speciality" v={doctor.specialityLegacy} />
+            <Row k="Qualification" v={doctor.qualification} bad={!doctor.qualification} />
             <Row k="Category" v={doctor.category} bad={!doctor.category} badText="not set" />
             <Row k="Status" v={doctor.status} />
             <Row k="Qualification status" v={doctor.qualificationStatus} />
@@ -67,8 +67,8 @@ export default function DoctorDrawer({ doctor, onClose }) {
 
           <Group title="Location & geo">
             <Row k="Territory" v={doctor.territory} bad={!doctor.territory} badText="missing" />
-            <Row k="City" v={doctor.city} />
-            <Row k="State" v={doctor.state} warn={isNonStandardState(doctor.state)} />
+            <Row k="City" v={doctor.city} bad={!doctor.city} />
+            <Row k="State" v={doctor.state} bad={!doctor.state} />
             <Row k="Country" v={doctor.country} />
             <Row k="Latitude" v={doctor.latitude} bad={!geoOk} />
             <Row k="Longitude" v={doctor.longitude} bad={!geoOk} />
@@ -88,9 +88,7 @@ export default function DoctorDrawer({ doctor, onClose }) {
                 <div className="rolecard__role code">{rp.role}</div>
                 <div className="rolecard__meta">
                   {rp.department}
-                  <span className={rp.hq !== doctor.territory && doctor.territory ? 'sev-warning' : 'muted'}>
-                    {' · '}{rp.hq}{rp.hq !== doctor.territory && doctor.territory ? ' ≠ territory' : ''}
-                  </span>
+                  <span className="muted">{' · '}{rp.hq}</span>
                 </div>
               </div>
             ))}
@@ -147,9 +145,4 @@ function Row({ k, v, mono, bad, warn, badText, flag }) {
 
 const hasGeo = (r) => r.latitude && r.longitude && Number(r.latitude) !== 0 && Number(r.longitude) !== 0
 const isRealPhone = (v) => v && String(v).replace(/\D/g, '').length >= 10
-const isNonStandardState = (s) => s && s !== 'Tamil Nadu'
 const fmtPhone = (v) => (v == null ? null : isRealPhone(v) ? v : `"${v}" (placeholder)`)
-function whitespaceFlag(v) {
-  if (v !== v.trim()) return <span className="sev-warning" style={{ fontWeight: 600 }}>  ⟵ stray space</span>
-  return ''
-}
