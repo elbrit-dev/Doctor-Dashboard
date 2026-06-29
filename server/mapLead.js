@@ -2,7 +2,7 @@
 // expects (identical to the objects in src/data/doctors.js). Keep this in sync
 // with that file's field names so live and snapshot data are interchangeable.
 
-export function mapLead(d) {
+export function mapLead(d, address = null) {
   return {
     name: d.name,
     code: d.custom_doctor_code ?? null,
@@ -13,6 +13,9 @@ export function mapLead(d) {
     specialty: d.custom_specialty ?? '',
     qualification: d.custom_qualification ?? '',
     category: emptyToNull(d.custom_category),
+    category1: emptyToNull(d.custom_category1),
+    category2: emptyToNull(d.custom_category2),
+    category3: emptyToNull(d.custom_category3),
     latitude: numOr0(d.custom_latitude),
     longitude: numOr0(d.custom_longitude),
     hasGeoJson: !!(d.custom_latitude_and_longitude && String(d.custom_latitude_and_longitude).trim()),
@@ -45,6 +48,20 @@ export function mapLead(d) {
       department: r.department ?? '',
       hq: r.hq ?? '',
     })),
+    // Linked Address doctype (null when no address record exists)
+    addressName: address?.name ?? null,
+    addressTitle: address?.address_title ?? null,
+    addressType: address?.address_type ?? null,
+    addressLine1: address?.address_line1 ?? null,
+    addressLine2: address?.address_line2 ?? null,
+    addressCity: address?.city ?? null,
+    county: address?.county ?? null,
+    addressState: address?.state ?? null,
+    pincode: address?.pincode ?? null,
+    addressCountry: address?.country ?? null,
+    gstin: address?.gstin ?? null,
+    gstState: address?.gst_state ?? null,
+    gstStateNumber: address?.gst_state_number ?? null,
   }
 }
 

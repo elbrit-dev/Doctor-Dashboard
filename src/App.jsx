@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { DEFAULTS, SOURCE } from './data/doctors.js'
 import { loadDoctors } from './data/source.js'
 import { validate } from './validation/rules.js'
+import { exportDoctorsExcel } from './lib/exportExcel.js'
 import { IconShield, IconRefresh } from './components/icons.jsx'
 import KpiCards from './components/KpiCards.jsx'
 import { SeveritySplit, Distribution } from './components/Charts.jsx'
@@ -106,6 +107,7 @@ export default function App() {
           activeFilterCount={activeFilterCount}
           resetAll={resetAll}
           selected={selected} onSelect={setSelected}
+          onExport={() => exportDoctorsExcel(records, new Date().toISOString().slice(0, 10))}
         />
       </div>
 

@@ -43,7 +43,7 @@ app.get('/api/doctors', async (req, res) => {
       source: `ERPNext · ${BASE}`,
       fetchedAt: new Date().toISOString(),
       count: docs.length,
-      doctors: docs.map(mapLead),
+      doctors: docs,
     })
   } catch (err) {
     console.error('[proxy] fetch failed:', err.message)
@@ -51,15 +51,38 @@ app.get('/api/doctors', async (req, res) => {
   }
 })
 
+const authHeaders = { Authorization: `token ${KEY}:${SECRET}`, Accept: 'application/json' }
+
 // Fetch a single Lead doc (full document, including child tables).
 async function fetchLead(name) {
   const url = `${BASE}/api/resource/Lead/${encodeURIComponent(name)}`
-  const r = await fetch(url, {
-    headers: { Authorization: `token ${KEY}:${SECRET}`, Accept: 'application/json' },
-  })
+  const r = await fetch(url, { headers: authHeaders })
   if (!r.ok) throw new Error(`${name}: HTTP ${r.status} ${r.statusText}`)
   const json = await r.json()
   return json.data
+}
+
+// Fetch the Address doctype linked to a Lead via the Dynamic Link child table.
+// Returns the first address or null (many doctors have no address yet).
+async function fetchAddress(name) {
+  const filters = JSON.stringify([
+    ['Dynamic Link', 'link_name', '=', name],
+    ['Dynamic Link', 'link_doctype', '=', 'Lead'],
+  ])
+  const url = `${BASE}/api/resource/Address?filters=${encodeURIComponent(filters)}&fields=${encodeURIComponent('["*"]')}&limit_page_length=1`
+  const r = await fetch(url, { headers: authHeaders })
+  if (!r.ok) return null
+  const json = await r.json()
+  return (json.data && json.data[0]) || null
+}
+
+// Fetch one doctor = its Lead + linked Address, mapped together.
+async function fetchDoctor(name) {
+  const [lead, address] = await Promise.all([
+    fetchLead(name),
+    fetchAddress(name).catch(() => null),
+  ])
+  return mapLead(lead, address)
 }
 
 // Fetch all ids with a small concurrency cap.
@@ -67,7 +90,7 @@ async function fetchAll(ids) {
   const out = []
   for (let i = 0; i < ids.length; i += CONCURRENCY) {
     const batch = ids.slice(i, i + CONCURRENCY)
-    const results = await Promise.all(batch.map(fetchLead))
+    const results = await Promise.all(batch.map(fetchDoctor))
     out.push(...results)
   }
   return out

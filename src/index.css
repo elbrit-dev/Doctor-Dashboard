@@ -203,6 +203,23 @@ button { font-family: inherit; cursor: pointer; }
 }
 .reset-btn:hover { background: var(--error-soft); color: var(--error); border-color: var(--error-soft); }
 
+.export-btn {
+  display: inline-flex; align-items: center; gap: 7px; white-space: nowrap;
+  border: 0; border-radius: var(--radius-sm); padding: 8px 14px;
+  font-size: 12.5px; font-weight: 650; color: #fff;
+  background: linear-gradient(135deg, var(--brand), #8b5cf6);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+.export-btn:hover { filter: brightness(1.05); }
+.export-btn:active { transform: translateY(1px); }
+
+/* role-profile (sales team) table in the drawer */
+.rp-table { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; font-size: 12px; }
+.rp-table__head, .rp-table__row { display: grid; grid-template-columns: 1.3fr 1.4fr 1fr; gap: 8px; padding: 8px 11px; }
+.rp-table__head { background: var(--surface-2); font-weight: 700; color: var(--text-faint); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; }
+.rp-table__row { border-top: 1px solid var(--border); }
+.rp-table__row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
 .fselect {
   display: inline-flex; flex-direction: column; gap: 2px;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);

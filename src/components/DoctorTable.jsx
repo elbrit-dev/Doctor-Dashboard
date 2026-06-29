@@ -1,4 +1,4 @@
-import { IconSearch } from './icons.jsx'
+import { IconSearch, IconDownload } from './icons.jsx'
 
 const STATUS_TABS = [
   { key: 'all', label: 'All' },
@@ -9,7 +9,7 @@ const STATUS_TABS = [
 
 export default function DoctorTable({
   records, totalCount, totals, query, setQuery, status, setStatus,
-  filters, setFilter, options, activeFilterCount, resetAll, selected, onSelect,
+  filters, setFilter, options, activeFilterCount, resetAll, selected, onSelect, onExport,
 }) {
   const counts = {
     all: totals.doctors,
@@ -51,6 +51,9 @@ export default function DoctorTable({
         {activeFilterCount > 0 && (
           <button className="reset-btn" onClick={resetAll}>Reset{activeFilterCount > 1 ? ` (${activeFilterCount})` : ''} ✕</button>
         )}
+        <button className="export-btn" onClick={onExport} title={`Download all ${totalCount} doctors as Excel`}>
+          <IconDownload width={15} height={15} /> Export Excel
+        </button>
       </div>
 
       <div className="table-wrap">

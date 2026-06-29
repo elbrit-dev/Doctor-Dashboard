@@ -11,3 +11,4 @@ export const IconUsers = (p) => (<svg {...base} {...p}><path d="M16 21v-2a4 4 0 
 export const IconPin = (p) => (<svg {...base} {...p}><path d="M12 21s-7-6-7-11a7 7 0 0 1 14 0c0 5-7 11-7 11z" /><circle cx="12" cy="10" r="2.5" /></svg>)
 export const IconChevron = (p) => (<svg {...base} {...p}><path d="M9 18l6-6-6-6" /></svg>)
 export const IconRefresh = (p) => (<svg {...base} {...p}><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>)
+export const IconDownload = (p) => (<svg {...base} {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M7 10l5 5 5-5" /><path d="M12 15V3" /></svg>)

@@ -57,6 +57,9 @@ export default function DoctorDrawer({ doctor, onClose }) {
             <Row k="Legacy speciality" v={doctor.specialityLegacy} />
             <Row k="Qualification" v={doctor.qualification} bad={!doctor.qualification} />
             <Row k="Category" v={doctor.category} bad={!doctor.category} badText="not set" />
+            <Row k="Category 1" v={doctor.category1} />
+            <Row k="Category 2" v={doctor.category2} />
+            <Row k="Category 3" v={doctor.category3} />
             <Row k="Status" v={doctor.status} />
             <Row k="Qualification status" v={doctor.qualificationStatus} />
             <Row k="Lead type" v={doctor.leadType || '—'} />
@@ -82,17 +85,42 @@ export default function DoctorDrawer({ doctor, onClose }) {
             <Row k="WhatsApp" v={fmtPhone(doctor.whatsapp)} bad={!isRealPhone(doctor.whatsapp)} />
           </Group>
 
-          <Group title={`Role profiles (${doctor.roleProfiles.length})`}>
-            {doctor.roleProfiles.map((rp, i) => (
-              <div key={i} className="rolecard">
-                <div className="rolecard__role code">{rp.role}</div>
-                <div className="rolecard__meta">
-                  {rp.department}
-                  <span className="muted">{' · '}{rp.hq}</span>
-                </div>
-              </div>
-            ))}
+          <Group title="Address">
+            {doctor.addressName ? (
+              <>
+                <Row k="Address line 1" v={doctor.addressLine1} />
+                <Row k="Address line 2" v={doctor.addressLine2} />
+                <Row k="City" v={doctor.addressCity} />
+                <Row k="County" v={doctor.county} />
+                <Row k="State" v={doctor.addressState} />
+                <Row k="Pincode" v={doctor.pincode} />
+                <Row k="Country" v={doctor.addressCountry} />
+                <Row k="GSTIN" v={doctor.gstin} />
+                <Row k="GST state" v={doctor.gstState ? `${doctor.gstState}${doctor.gstStateNumber ? ` (${doctor.gstStateNumber})` : ''}` : null} />
+              </>
+            ) : (
+              <Row k="Address" v={null} badText="no address record" warn />
+            )}
           </Group>
+
+          {/* Sales Team — the role-profile table from ERPNext */}
+          <div className="section-label">Sales team · role profiles ({doctor.roleProfiles.length})</div>
+          {doctor.roleProfiles.length === 0 ? (
+            <p className="card__hint" style={{ margin: '0 0 4px' }}>No role profiles assigned.</p>
+          ) : (
+            <div className="rp-table">
+              <div className="rp-table__head">
+                <span>Role Profile</span><span>Department</span><span>HQ</span>
+              </div>
+              {doctor.roleProfiles.map((rp, i) => (
+                <div className="rp-table__row" key={i}>
+                  <span className="code">{rp.role || '—'}</span>
+                  <span>{rp.department || '—'}</span>
+                  <span>{rp.hq || '—'}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           <Group title="Company & audit">
             <Row k="Company" v={doctor.company} />
