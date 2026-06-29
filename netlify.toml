@@ -12,6 +12,12 @@
   to = "/.netlify/functions/doctors"
   status = 200
 
+# CRM review write-back (POST) → posts a comment on the Lead in ERPNext.
+[[redirects]]
+  from = "/api/review"
+  to = "/.netlify/functions/review"
+  status = 200
+
 # SPA fallback — every other route serves the built index.html.
 [[redirects]]
   from = "/*"

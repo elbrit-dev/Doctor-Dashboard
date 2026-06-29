@@ -2,7 +2,9 @@
 // expects (identical to the objects in src/data/doctors.js). Keep this in sync
 // with that file's field names so live and snapshot data are interchangeable.
 
-export function mapLead(d, address = null) {
+export function mapLead(d, addresses = []) {
+  const list = Array.isArray(addresses) ? addresses : addresses ? [addresses] : []
+  const address = list[0] || null
   return {
     name: d.name,
     code: d.custom_doctor_code ?? null,
@@ -48,7 +50,24 @@ export function mapLead(d, address = null) {
       department: r.department ?? '',
       hq: r.hq ?? '',
     })),
-    // Linked Address doctype (null when no address record exists)
+    // Linked Address doctype(s). A Lead can have several (e.g. Doctor + Clinic).
+    // `addresses` is the full list; the flat fields below mirror the first one
+    // so the Excel export and older consumers keep working unchanged.
+    addresses: list.map((a) => ({
+      name: a?.name ?? null,
+      title: a?.address_title ?? null,
+      type: a?.address_type ?? null,
+      line1: a?.address_line1 ?? null,
+      line2: a?.address_line2 ?? null,
+      city: a?.city ?? null,
+      county: a?.county ?? null,
+      state: a?.state ?? null,
+      pincode: a?.pincode ?? null,
+      country: a?.country ?? null,
+      gstin: a?.gstin ?? null,
+      gstState: a?.gst_state ?? null,
+      gstStateNumber: a?.gst_state_number ?? null,
+    })),
     addressName: address?.name ?? null,
     addressTitle: address?.address_title ?? null,
     addressType: address?.address_type ?? null,

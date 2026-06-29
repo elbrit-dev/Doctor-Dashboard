@@ -22,6 +22,10 @@ const CONCURRENCY = 8
 
 const app = express()
 app.use(cors())
+app.use(express.json())
+
+// Marker prefix so dashboard-written review comments can be read back later.
+const REVIEW_MARKER = 'CRM Review'
 
 const configured = () => BASE && KEY && SECRET
 
@@ -37,17 +41,36 @@ app.get('/api/doctors', async (req, res) => {
     })
   }
   try {
-    const docs = await fetchAll(DOCTOR_IDS)
+    const [docs, reviews] = await Promise.all([fetchAll(DOCTOR_IDS), fetchReviews(DOCTOR_IDS)])
+    const withReview = docs.map((d) => ({ ...d, review: reviews[d.name] || null }))
     res.json({
       mode: 'live',
       source: `ERPNext · ${BASE}`,
       fetchedAt: new Date().toISOString(),
-      count: docs.length,
-      doctors: docs,
+      count: withReview.length,
+      doctors: withReview,
     })
   } catch (err) {
     console.error('[proxy] fetch failed:', err.message)
     res.status(502).json({ error: 'Upstream ERPNext request failed', detail: err.message })
+  }
+})
+
+// CRM writes a review back to ERPNext as a comment on the Lead's timeline.
+// Body: { id, decision: 'ready'|'error', issues?: string[], note?: string, by?: string }
+app.post('/api/review', async (req, res) => {
+  if (!configured()) return res.status(503).json({ error: 'ERPNext not configured' })
+  const { id, decision, issues = [], note = '', by = 'dashboard' } = req.body || {}
+  if (!id || !['ready', 'error'].includes(decision)) {
+    return res.status(400).json({ error: 'id and decision (ready|error) are required' })
+  }
+  try {
+    const content = buildReviewComment(decision, issues, note, by)
+    const out = await addComment(id, content, by)
+    res.json({ ok: true, id, decision, commentId: out?.name || null })
+  } catch (err) {
+    console.error('[proxy] review failed:', err.message)
+    res.status(502).json({ error: 'Failed to post review to ERPNext', detail: err.message })
   }
 })
 
@@ -62,28 +85,85 @@ async function fetchLead(name) {
   return json.data
 }
 
-// Fetch the Address doctype linked to a Lead via the Dynamic Link child table.
-// Returns the first address or null (many doctors have no address yet).
-async function fetchAddress(name) {
+// Fetch ALL Address doctypes linked to a Lead via the Dynamic Link child table.
+// A Lead can have several addresses (e.g. a Doctor address + a Clinic address).
+async function fetchAddresses(name) {
   const filters = JSON.stringify([
     ['Dynamic Link', 'link_name', '=', name],
     ['Dynamic Link', 'link_doctype', '=', 'Lead'],
   ])
-  const url = `${BASE}/api/resource/Address?filters=${encodeURIComponent(filters)}&fields=${encodeURIComponent('["*"]')}&limit_page_length=1`
+  const url = `${BASE}/api/resource/Address?filters=${encodeURIComponent(filters)}&fields=${encodeURIComponent('["*"]')}&limit_page_length=50`
   const r = await fetch(url, { headers: authHeaders })
-  if (!r.ok) return null
+  if (!r.ok) return []
   const json = await r.json()
-  return (json.data && json.data[0]) || null
+  return Array.isArray(json.data) ? json.data : []
 }
 
-// Fetch one doctor = its Lead + linked Address, mapped together.
+// Fetch one doctor = its Lead + linked Address(es), mapped together.
 async function fetchDoctor(name) {
-  const [lead, address] = await Promise.all([
+  const [lead, addresses] = await Promise.all([
     fetchLead(name),
-    fetchAddress(name).catch(() => null),
+    fetchAddresses(name).catch(() => []),
   ])
-  return mapLead(lead, address)
+  return mapLead(lead, addresses)
 }
+
+// Read back the latest dashboard-written review comment per Lead, in one query.
+async function fetchReviews(ids) {
+  const filters = JSON.stringify([
+    ['reference_doctype', '=', 'Lead'],
+    ['reference_name', 'in', ids],
+    ['content', 'like', `%${REVIEW_MARKER}%`],
+  ])
+  const fields = JSON.stringify(['reference_name', 'content', 'creation', 'comment_by'])
+  const url = `${BASE}/api/resource/Comment?filters=${encodeURIComponent(filters)}&fields=${encodeURIComponent(fields)}&order_by=${encodeURIComponent('creation asc')}&limit_page_length=0`
+  const r = await fetch(url, { headers: authHeaders })
+  if (!r.ok) return {}
+  const json = await r.json()
+  const latest = {}
+  for (const c of json.data || []) {
+    // asc order => last write per doctor wins
+    latest[c.reference_name] = parseReview(c)
+  }
+  return latest
+}
+
+function parseReview(c) {
+  const text = stripHtml(c.content || '')
+  const decision = /READY/i.test(text) ? 'ready' : /ERROR/i.test(text) ? 'error' : null
+  return { decision, text, at: (c.creation || '').slice(0, 19), by: c.comment_by || '' }
+}
+
+// Build the timeline comment body the CRM review writes to ERPNext.
+function buildReviewComment(decision, issues, note, by) {
+  if (decision === 'ready') {
+    return `<b>${REVIEW_MARKER}: ✅ READY</b> — data verified correct.` + (note ? `<br>Note: ${esc(note)}` : '') + `<br><i>by ${esc(by)} via dashboard</i>`
+  }
+  const list = (issues || []).filter(Boolean).map(esc)
+  const issuesHtml = list.length ? `<br>Issues: ${list.join(', ')}` : ''
+  return `<b>${REVIEW_MARKER}: ⚠️ ERROR</b>${issuesHtml}` + (note ? `<br>Note: ${esc(note)}` : '') + `<br><i>by ${esc(by)} via dashboard</i>`
+}
+
+// Post a comment to a Lead's timeline (the section at the bottom of the form).
+async function addComment(name, content, by) {
+  const url = `${BASE}/api/method/frappe.desk.form.utils.add_comment`
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { ...authHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      reference_doctype: 'Lead',
+      reference_name: name,
+      content,
+      comment_email: by || 'dashboard',
+      comment_by: by || 'dashboard',
+    }),
+  })
+  if (!r.ok) throw new Error(`add_comment ${name}: HTTP ${r.status} ${r.statusText}`)
+  return (await r.json()).message
+}
+
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+const stripHtml = (s) => String(s).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
 
 // Fetch all ids with a small concurrency cap.
 async function fetchAll(ids) {

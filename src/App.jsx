@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { DEFAULTS, SOURCE } from './data/doctors.js'
-import { loadDoctors } from './data/source.js'
+import { loadDoctors, submitReview } from './data/source.js'
 import { validate } from './validation/rules.js'
 import { exportDoctorsExcel } from './lib/exportExcel.js'
 import { IconShield, IconRefresh } from './components/icons.jsx'
@@ -21,6 +21,13 @@ export default function App() {
     loadDoctors().then((f) => { setFeed(f); setRefreshing(false) })
   }
   useEffect(() => { refresh() }, [])
+
+  // Write a CRM review back to ERPNext, then re-fetch so the new status shows.
+  const handleReview = async (payload) => {
+    const out = await submitReview({ ...payload, by: 'it@elbrit.org' })
+    refresh()
+    return out
+  }
 
   // Merge batch-constant defaults so the full field set is present, then validate.
   const result = useMemo(() => validate(feed.doctors.map((d) => ({ ...DEFAULTS, ...d }))), [feed])
@@ -120,7 +127,7 @@ export default function App() {
             : <>Loading…</>}
       </p>
 
-      {selectedDoctor && <DoctorDrawer doctor={selectedDoctor} onClose={() => setSelected(null)} />}
+      {selectedDoctor && <DoctorDrawer doctor={selectedDoctor} onClose={() => setSelected(null)} onReview={feed.mode === 'live' ? handleReview : null} />}
     </div>
   )
 }

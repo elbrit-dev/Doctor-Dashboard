@@ -27,3 +27,16 @@ export async function loadDoctors() {
     }
   }
 }
+
+// CRM writes a review decision back to ERPNext (posts a comment on the Lead).
+// payload: { id, decision: 'ready'|'error', issues?: string[], note?: string, by?: string }
+export async function submitReview(payload) {
+  const res = await fetch('/api/review', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`)
+  return body
+}

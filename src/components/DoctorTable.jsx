@@ -69,6 +69,7 @@ export default function DoctorTable({
               <th className="num">Contact</th>
               <th>Issues</th>
               <th>Status</th>
+              <th>CRM review</th>
             </tr>
           </thead>
           <tbody>
@@ -86,6 +87,7 @@ export default function DoctorTable({
                 <td className="num"><Flag ok={hasContact(r)} /></td>
                 <td><MiniCounts counts={r.counts} /></td>
                 <td><StatusPill status={r.status} /></td>
+                <td><ReviewChip review={r.review} /></td>
               </tr>
             ))}
           </tbody>
@@ -126,6 +128,15 @@ function MiniCounts({ counts }) {
   if (counts.info) parts.push(<span className="c sev-info" key="i">●{counts.info}</span>)
   if (parts.length === 0) return <span className="muted">—</span>
   return <span className="minicount">{parts}</span>
+}
+
+function ReviewChip({ review }) {
+  if (!review || !review.decision) return <span className="muted">—</span>
+  return (
+    <span className={`review-chip ${review.decision}`} title={review.text || ''}>
+      {review.decision === 'ready' ? '✅ Ready' : '⚠️ Error'}
+    </span>
+  )
 }
 
 export function StatusPill({ status }) {
