@@ -28,6 +28,31 @@ export async function loadDoctors() {
   }
 }
 
+// Bulk fetch ERPNext records for doctor codes, in chunks so large sheets stay
+// under serverless timeouts. onProgress(done, total) fires after each chunk.
+// Returns { doctors: { strippedCode -> mapped doctor }, found, requested }.
+export async function fetchLeadsByCode(codes, { addresses = true, onProgress } = {}) {
+  // Address lookups are 1 request per doctor (ERPNext blocks bulk address
+  // mapping), so use small chunks when addresses are on, big chunks when off.
+  const chunk = addresses ? 60 : 200
+  const doctors = {}
+  let found = 0
+  for (let i = 0; i < codes.length; i += chunk) {
+    const slice = codes.slice(i, i + chunk)
+    const res = await fetch('/api/leads-by-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ codes: slice, addresses }),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`)
+    Object.assign(doctors, body.doctors || {})
+    found += body.found || 0
+    if (onProgress) onProgress(Math.min(i + chunk, codes.length), codes.length)
+  }
+  return { doctors, found, requested: codes.length }
+}
+
 // CRM writes a review decision back to ERPNext (posts a comment on the Lead).
 // payload: { id, decision: 'ready'|'error', issues?: string[], note?: string, by?: string }
 export async function submitReview(payload) {

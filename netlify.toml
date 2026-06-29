@@ -18,6 +18,12 @@
   to = "/.netlify/functions/review"
   status = 200
 
+# Bulk reconciliation: fetch many Leads (+addresses) by doctor code.
+[[redirects]]
+  from = "/api/leads-by-code"
+  to = "/.netlify/functions/leads-by-code"
+  status = 200
+
 # SPA fallback — every other route serves the built index.html.
 [[redirects]]
   from = "/*"

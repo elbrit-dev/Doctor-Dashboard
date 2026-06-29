@@ -22,3 +22,9 @@ npm-debug.log*
 
 # vite cache
 .vite/
+
+# Local data sheets (contain PII — never commit/deploy)
+public/*.xlsx
+public/*.xls
+public/*.csv
+*.mjs

@@ -9,6 +9,7 @@ import { SeveritySplit, Distribution } from './components/Charts.jsx'
 import IssuesPanel from './components/IssuesPanel.jsx'
 import DoctorTable from './components/DoctorTable.jsx'
 import DoctorDrawer from './components/DoctorDrawer.jsx'
+import ReconcileView from './components/ReconcileView.jsx'
 
 const EMPTY_FILTERS = { specialty: '', category: '', territory: '', check: '' }
 
@@ -33,6 +34,7 @@ export default function App() {
   const result = useMemo(() => validate(feed.doctors.map((d) => ({ ...DEFAULTS, ...d }))), [feed])
   const { records, totals, byRule } = result
 
+  const [mode, setMode] = useState('validate') // validate | reconcile
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('all')
   const [filters, setFilters] = useState(EMPTY_FILTERS)
@@ -85,14 +87,24 @@ export default function App() {
           </div>
         </div>
         <div className="header__meta">
+          <div className="segmented mode-tabs">
+            <button className={mode === 'validate' ? 'active' : ''} onClick={() => setMode('validate')}>Validation</button>
+            <button className={mode === 'reconcile' ? 'active' : ''} onClick={() => setMode('reconcile')}>Bulk reconciliation</button>
+          </div>
           <ModeBadge mode={feed.mode} fetchedAt={feed.fetchedAt} />
-          <button className="env-badge env-badge--btn" onClick={refresh} disabled={refreshing} title="Re-fetch from ERPNext">
-            <IconRefresh width={14} height={14} className={refreshing ? 'spin' : ''} />
-            {refreshing ? 'Refreshing…' : 'Refresh'}
-          </button>
+          {mode === 'validate' && (
+            <button className="env-badge env-badge--btn" onClick={refresh} disabled={refreshing} title="Re-fetch from ERPNext">
+              <IconRefresh width={14} height={14} className={refreshing ? 'spin' : ''} />
+              {refreshing ? 'Refreshing…' : 'Refresh'}
+            </button>
+          )}
         </div>
       </header>
 
+      {mode === 'reconcile' ? (
+        <ReconcileView live={feed.mode === 'live'} />
+      ) : (
+      <>
       <KpiCards totals={totals} />
 
       <div className="grid">
@@ -117,17 +129,21 @@ export default function App() {
           onExport={() => exportDoctorsExcel(records, new Date().toISOString().slice(0, 10))}
         />
       </div>
+      </>
+      )}
 
-      <p className="footer-note">
-        Validating <code>{records.length}</code> doctor records · source: {feed.source}.<br />
-        {feed.mode === 'live'
-          ? <>Live from ERPNext{feed.fetchedAt ? ` · fetched ${feed.fetchedAt}` : ''}.</>
-          : feed.mode === 'snapshot'
-            ? <>Showing bundled snapshot{feed.reason ? ` — live fetch unavailable (${feed.reason})` : ''}. Start the proxy (<code>npm run server</code>) with <code>.env</code> configured to go live.</>
-            : <>Loading…</>}
-      </p>
+      {mode === 'validate' && (
+        <p className="footer-note">
+          Validating <code>{records.length}</code> doctor records · source: {feed.source}.<br />
+          {feed.mode === 'live'
+            ? <>Live from ERPNext{feed.fetchedAt ? ` · fetched ${feed.fetchedAt}` : ''}.</>
+            : feed.mode === 'snapshot'
+              ? <>Showing bundled snapshot{feed.reason ? ` — live fetch unavailable (${feed.reason})` : ''}. Start the proxy (<code>npm run server</code>) with <code>.env</code> configured to go live.</>
+              : <>Loading…</>}
+        </p>
+      )}
 
-      {selectedDoctor && <DoctorDrawer doctor={selectedDoctor} onClose={() => setSelected(null)} onReview={feed.mode === 'live' ? handleReview : null} />}
+      {mode === 'validate' && selectedDoctor && <DoctorDrawer doctor={selectedDoctor} onClose={() => setSelected(null)} onReview={feed.mode === 'live' ? handleReview : null} />}
     </div>
   )
 }

@@ -76,6 +76,72 @@ app.post('/api/review', async (req, res) => {
 
 const authHeaders = { Authorization: `token ${KEY}:${SECRET}`, Accept: 'application/json' }
 
+// ---- Bulk reconciliation: fetch many Leads by doctor code in few requests ----
+// Body: { codes: ["78031", "3194", ...] }  (leading zeros are stripped here too)
+// Returns the same mapped shape as /api/doctors (minus addresses/role profiles),
+// in ~1 request per 100 codes via the Lead list API.
+const BULK_FIELDS = [
+  'name', 'custom_doctor_code', 'lead_name', 'first_name', 'salutation',
+  'custom_speciality', 'custom_specialty', 'custom_qualification',
+  'custom_category', 'custom_category1', 'custom_category2', 'custom_category3',
+  'territory', 'state', 'city', 'country', 'mobile_no', 'phone', 'whatsapp_no',
+  'custom_latitude', 'custom_longitude', 'custom_address_created',
+]
+const CHUNK = 100
+
+app.post('/api/leads-by-code', async (req, res) => {
+  if (!configured()) return res.status(503).json({ error: 'ERPNext not configured' })
+  const codes = Array.isArray(req.body?.codes) ? req.body.codes : []
+  if (codes.length === 0) return res.status(400).json({ error: 'codes[] is required' })
+  // strip leading zeros: "00078031" -> "78031"; build the DR- name
+  const clean = [...new Set(codes.map((c) => String(c).trim().replace(/^0+/, '')).filter(Boolean))]
+  const names = clean.map((c) => `DR-${c}`)
+  const withAddresses = req.body?.addresses !== false // default: include addresses
+  try {
+    const leads = await fetchLeadsByNames(names)
+    // Addresses can't be bulk-mapped (Dynamic Link is 403), so fetch per lead
+    // with a concurrency cap. Slower for very large sheets but accurate.
+    const addrMap = {}
+    if (withAddresses) {
+      for (let i = 0; i < leads.length; i += CONCURRENCY) {
+        const batch = leads.slice(i, i + CONCURRENCY)
+        const results = await Promise.all(batch.map((l) => fetchAddresses(l.name).catch(() => [])))
+        batch.forEach((l, j) => { addrMap[l.name] = results[j] })
+      }
+    }
+    const byCode = {}
+    for (const lead of leads) {
+      const doc = mapLead(lead, addrMap[lead.name] || [])
+      byCode[String(doc.code).replace(/^0+/, '')] = doc
+    }
+    res.json({
+      source: `ERPNext · ${BASE}`,
+      fetchedAt: new Date().toISOString(),
+      requested: clean.length,
+      found: leads.length,
+      doctors: byCode, // keyed by stripped doctor code
+    })
+  } catch (err) {
+    console.error('[proxy] bulk fetch failed:', err.message)
+    res.status(502).json({ error: 'Bulk ERPNext fetch failed', detail: err.message })
+  }
+})
+
+async function fetchLeadsByNames(names) {
+  const out = []
+  for (let i = 0; i < names.length; i += CHUNK) {
+    const chunk = names.slice(i, i + CHUNK)
+    const filters = encodeURIComponent(JSON.stringify([['name', 'in', chunk]]))
+    const fields = encodeURIComponent(JSON.stringify(BULK_FIELDS))
+    const url = `${BASE}/api/resource/Lead?filters=${filters}&fields=${fields}&limit_page_length=0`
+    const r = await fetch(url, { headers: authHeaders })
+    if (!r.ok) throw new Error(`bulk chunk ${i / CHUNK}: HTTP ${r.status} ${r.statusText}`)
+    const json = await r.json()
+    if (Array.isArray(json.data)) out.push(...json.data)
+  }
+  return out
+}
+
 // Fetch a single Lead doc (full document, including child tables).
 async function fetchLead(name) {
   const url = `${BASE}/api/resource/Lead/${encodeURIComponent(name)}`
