@@ -24,7 +24,6 @@ export function triage(rows, uatLeads) {
   const groups = groupLeads(uatLeads)
   const create = []
   const update = []
-  const dupMap = {}
 
   for (const r of rows) {
     const code = normCode(r['Dr. Code'])
@@ -36,34 +35,18 @@ export function triage(rows, uatLeads) {
       hq: String(r['HQ'] ?? '').trim(),
     }
     const g = groups[code]
-    if (!g) {
-      create.push(info)
-      continue
-    }
-    update.push({ ...info, uatId: g.clean || g.all[0] })
-    if (g.all.length > 1 && !dupMap[code]) {
-      const keep = g.clean || `DR-${code}`
-      dupMap[code] = {
-        code,
-        keep,
-        remove: g.all.filter((n) => n !== keep),
-        kind: g.clean ? 'has_clean_form' : 'no_clean_form',
-        all: g.all,
-      }
-    }
+    if (!g) create.push(info)
+    else update.push({ ...info, uatId: g.clean || g.all[0] })
   }
 
-  const duplicates = Object.values(dupMap)
   return {
     counts: {
       sheetRows: rows.length,
       uatCodedLeads: uatLeads.length,
       create: create.length,
       update: update.length,
-      duplicates: duplicates.length,
     },
     create,
     update,
-    duplicates,
   }
 }

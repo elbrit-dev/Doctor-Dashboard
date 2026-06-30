@@ -57,8 +57,7 @@ export default function TriageView({ live }) {
             <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>Create vs Update</h3>
             <p className="card__hint" style={{ margin: 0 }}>
               Upload a division sheet. Each row is matched by <b>Dr. Code</b> against UAT: codes not in UAT are
-              <b> to create</b>, codes already in UAT are <b>to update</b>. Duplicate IDs (same code stored as more
-              than one Lead, e.g. <code>DR-4444</code> + <code>DR-00004444</code>) are listed separately.
+              <b> to create</b>, codes already in UAT are <b>to update</b> (and compared field by field below).
             </p>
           </div>
           <button className="export-btn" onClick={() => fileRef.current?.click()} disabled={phase === 'working'}>
@@ -76,7 +75,6 @@ export default function TriageView({ live }) {
             <Kpi n={data.counts.sheetRows} label="Rows in sheet" />
             <Kpi n={data.counts.create} label="To create (new)" tone="ok" />
             <Kpi n={data.counts.update} label="To update (exists)" tone="warning" />
-            <Kpi n={data.counts.duplicates} label="Duplicate IDs" tone="error" />
           </div>
 
           <Block
@@ -93,33 +91,6 @@ export default function TriageView({ live }) {
               <ReconcileView live={live} embedded rows={updateRows} />
             ) : (
               <div className="card"><p className="card__hint" style={{ padding: '4px 4px 8px' }}>None to update.</p></div>
-            )}
-          </div>
-
-          <div className="card">
-            <div className="toolbar">
-              <span className="section-label" style={{ margin: 0 }}>Duplicate IDs in UAT ({data.duplicates.length})</span>
-              <div className="filterbar__spacer" />
-              {data.duplicates.length > 0 && (
-                <button className="export-btn" onClick={() => exportDupes(data.duplicates)}>
-                  <IconDownload width={15} height={15} /> Export duplicates
-                </button>
-              )}
-            </div>
-            {data.duplicates.length === 0 ? (
-              <p className="card__hint" style={{ padding: '4px 4px 8px' }}>No duplicate IDs among this sheet's codes. ✅</p>
-            ) : (
-              <div className="dup-list">
-                {data.duplicates.slice(0, CAP).map((d) => (
-                  <div className="dup-item" key={d.code}>
-                    <span className="code">{d.code}</span>
-                    <span className="dup-keep">keep <b>{d.keep}</b></span>
-                    <span className="dup-remove">remove {d.remove.map((n) => <code key={n}>{n}</code>)}</span>
-                    <span className={`review-chip ${d.kind === 'has_clean_form' ? 'ready' : 'error'}`}>{d.kind === 'has_clean_form' ? 'padded duplicate' : 'no clean form'}</span>
-                  </div>
-                ))}
-                {data.duplicates.length > CAP && <p className="card__hint">Showing first {CAP} of {data.duplicates.length} — export for the full list.</p>}
-              </div>
             )}
           </div>
         </>
@@ -168,11 +139,4 @@ function exportRows(rows, name) {
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{ Note: 'None' }]), name)
   XLSX.writeFile(wb, `${name}-${new Date().toISOString().slice(0, 10)}.xlsx`)
-}
-
-function exportDupes(dupes) {
-  const rows = dupes.map((d) => ({ 'Dr Code': d.code, Keep: d.keep, Remove: d.remove.join(', '), Kind: d.kind, 'All Leads': d.all.join(', ') }))
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Duplicates')
-  XLSX.writeFile(wb, `duplicate-ids-${new Date().toISOString().slice(0, 10)}.xlsx`)
 }
