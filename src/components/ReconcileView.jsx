@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { parseSheet, cleanCodes } from '../lib/parseSheet.js'
 import { fetchLeadsByCode, submitReview } from '../data/source.js'
@@ -15,7 +15,9 @@ const STATUS_META = {
   duplicate: { sym: '⎘', cls: 'rc-dup', label: 'Duplicate ID in UAT' },
 }
 
-export default function ReconcileView({ live }) {
+// `rows` (optional): pre-parsed [{ code, raw }] to compare instead of a file
+// upload — used to embed this comparison inside the Create/Update tab.
+export default function ReconcileView({ live, rows: externalRows = null, embedded = false }) {
   const fileRef = useRef(null)
   const [phase, setPhase] = useState('idle') // idle | working | done | error
   const [progress, setProgress] = useState(null)
@@ -67,12 +69,9 @@ export default function ReconcileView({ live }) {
     setReviewBusy(null); setBulkProg(null)
   }
 
-  const onFile = async (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setFileName(file.name); setError(null); setPhase('working'); setData(null); setPage(0)
+  const runRows = async (rows) => {
+    setError(null); setPhase('working'); setData(null); setPage(0)
     try {
-      const { rows, total } = await parseSheet(file)
       const codes = cleanCodes(rows)
       setProgress({ done: 0, total: codes.length })
       const { doctors } = await fetchLeadsByCode(codes, {
@@ -80,12 +79,27 @@ export default function ReconcileView({ live }) {
         onProgress: (done, t) => setProgress({ done, total: t }),
       })
       const out = reconcile(rows, doctors, { includeAddress: checkAddress })
-      out.summary.sheetTotal = total
+      out.summary.sheetTotal = rows.length
       setData(out); setPhase('done'); setProgress(null)
     } catch (err) {
       setError(err.message); setPhase('error'); setProgress(null)
     }
   }
+
+  const onFile = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setFileName(file.name)
+    const { rows } = await parseSheet(file).catch((err) => { setError(err.message); setPhase('error'); return { rows: null } })
+    if (rows) runRows(rows)
+  }
+
+  // Embedded mode: compare the rows handed in (e.g. the "update" subset), and
+  // re-run when those rows or the address toggle change.
+  useEffect(() => {
+    if (externalRows) runRows(externalRows)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalRows, checkAddress])
 
   const filtered = useMemo(() => {
     if (!data) return []
@@ -121,33 +135,37 @@ export default function ReconcileView({ live }) {
     )
   }
 
+  const progressText = phase === 'working'
+    ? (progress ? `comparing against UAT ${progress.done}/${progress.total}…` : 'reading sheet…')
+    : null
+
   return (
     <div className="stack" style={{ gap: 18 }}>
-      <div className="card" style={{ padding: 18 }}>
+      <div className="card" style={{ padding: embedded ? 12 : 18 }}>
         <div className="rc-upload">
           <div>
-            <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>Bulk reconciliation</h3>
+            <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>{embedded ? 'Field comparison — update rows (already in UAT)' : 'Bulk reconciliation'}</h3>
             <p className="card__hint" style={{ margin: 0 }}>
-              Upload a division sheet (.xlsx). Each row is matched to ERPNext by <b>Dr. Code</b> and every
-              field is compared. Formatting differences (HQ prefix, state case, leading zeros, phone format) are normalized.
+              {embedded
+                ? <>Each existing doctor is compared field by field against the sheet. Formatting differences (HQ prefix, state case, leading zeros, phone) are normalized.</>
+                : <>Upload a division sheet (.xlsx). Each row is matched to ERPNext by <b>Dr. Code</b> and every field is compared. Formatting differences (HQ prefix, state case, leading zeros, phone format) are normalized.</>}
             </p>
           </div>
           <label className="rc-addrtoggle" title="Address check fetches one request per doctor — slower on very large sheets">
             <input type="checkbox" checked={checkAddress} onChange={(e) => setCheckAddress(e.target.checked)} disabled={phase === 'working'} />
             Check addresses <span className="rc-addrtoggle__hint">(slower)</span>
           </label>
-          <button className="export-btn" onClick={() => fileRef.current?.click()} disabled={phase === 'working'}>
-            {phase === 'working' ? 'Checking…' : 'Upload sheet'}
-          </button>
-          <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={onFile} />
+          {!embedded && (
+            <>
+              <button className="export-btn" onClick={() => fileRef.current?.click()} disabled={phase === 'working'}>
+                {phase === 'working' ? 'Checking…' : 'Upload sheet'}
+              </button>
+              <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={onFile} />
+            </>
+          )}
         </div>
-        {fileName && (
-          <p className="rc-filename">
-            {fileName}
-            {phase === 'working' && (progress
-              ? ` · fetching ERPNext ${progress.done}/${progress.total}…`
-              : ' · reading sheet…')}
-          </p>
+        {(fileName || progressText) && (
+          <p className="rc-filename">{fileName}{progressText ? ` · ${progressText}` : ''}</p>
         )}
         {error && <p className="reviewbox__msg err" style={{ marginTop: 10 }}>Error: {error}</p>}
       </div>

@@ -1,8 +1,11 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { parseSheet } from '../lib/parseSheet.js'
 import { reconcileSheet } from '../data/source.js'
 import { IconDownload } from './icons.jsx'
+import ReconcileView from './ReconcileView.jsx'
+
+const nc = (c) => String(c ?? '').replace(/\D/g, '').replace(/^0+/, '')
 
 const CAP = 300 // max rows rendered per block; full data is in the export
 
@@ -12,19 +15,28 @@ export default function TriageView({ live }) {
   const [fileName, setFileName] = useState('')
   const [error, setError] = useState(null)
   const [data, setData] = useState(null)
+  const [parsedRows, setParsedRows] = useState(null) // [{ code, raw }]
 
   const onFile = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    setFileName(file.name); setError(null); setPhase('working'); setData(null)
+    setFileName(file.name); setError(null); setPhase('working'); setData(null); setParsedRows(null)
     try {
       const { rows } = await parseSheet(file)
       const out = await reconcileSheet(rows.map((r) => r.raw))
-      setData(out); setPhase('done')
+      setParsedRows(rows); setData(out); setPhase('done')
     } catch (err) {
       setError(err.message); setPhase('error')
     }
   }
+
+  // Parsed rows whose code already exists in UAT — fed to the embedded
+  // field-comparison so the "update" doctors get the full diff + filters.
+  const updateRows = useMemo(() => {
+    if (!data || !parsedRows) return []
+    const set = new Set(data.update.map((u) => u.code))
+    return parsedRows.filter((r) => set.has(nc(r.code)))
+  }, [data, parsedRows])
 
   if (!live) {
     return (
@@ -73,12 +85,16 @@ export default function TriageView({ live }) {
             cols={[['code', 'Dr Code'], ['name', 'Doctor'], ['empCode', 'Emp Code'], ['hq', 'HQ']]}
             onExport={() => exportRows(data.create, 'to-create')}
           />
-          <Block
-            title={`To update — already in UAT (${data.counts.update})`}
-            rows={data.update}
-            cols={[['code', 'Dr Code'], ['name', 'Doctor'], ['uatId', 'UAT Lead']]}
-            onExport={() => exportRows(data.update, 'to-update')}
-          />
+          <div className="stack" style={{ gap: 10 }}>
+            <div className="section-label" style={{ marginBottom: 0 }}>
+              To update — already in UAT ({data.counts.update}) · compared field-by-field below
+            </div>
+            {updateRows.length > 0 ? (
+              <ReconcileView live={live} embedded rows={updateRows} />
+            ) : (
+              <div className="card"><p className="card__hint" style={{ padding: '4px 4px 8px' }}>None to update.</p></div>
+            )}
+          </div>
 
           <div className="card">
             <div className="toolbar">
