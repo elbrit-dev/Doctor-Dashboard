@@ -28,9 +28,62 @@ const NUM_RE = /\d/
 
 export const strip = (c) => (String(c || '').replace(/^0+/, '') || '0')
 
-// State is taken straight from the sheet — no canonical map. Use the Clinic
-// State, falling back to the Lead State, exactly as written.
-function pickState(clinicState, leadState) {
+// ERPNext's Address doctype VALIDATES `state` against the country's official
+// list — raw sheet values like "Tamilnadu" or "Tn-Chennai" are rejected
+// (HTTP 417). So the Address state must be canonicalized. (The Lead's own
+// `state` field is free text and keeps the raw sheet value.) Keys are
+// despaced+lowercased; covers all 28 states + 8 UTs and common variants.
+const STATE_CANON = {
+  tamilnadu: 'Tamil Nadu', tn: 'Tamil Nadu',
+  kerala: 'Kerala', kl: 'Kerala', ker: 'Kerala',
+  karnataka: 'Karnataka', ka: 'Karnataka', kar: 'Karnataka',
+  andhrapradesh: 'Andhra Pradesh', ap: 'Andhra Pradesh', andhra: 'Andhra Pradesh',
+  telangana: 'Telangana', ts: 'Telangana', tg: 'Telangana', telengana: 'Telangana',
+  puducherry: 'Puducherry', pondicherry: 'Puducherry', py: 'Puducherry', pondy: 'Puducherry',
+  goa: 'Goa', ga: 'Goa',
+  maharashtra: 'Maharashtra', mh: 'Maharashtra', maharastra: 'Maharashtra',
+  gujarat: 'Gujarat', gj: 'Gujarat',
+  rajasthan: 'Rajasthan', rj: 'Rajasthan',
+  delhi: 'Delhi', newdelhi: 'Delhi', dl: 'Delhi',
+  punjab: 'Punjab', pb: 'Punjab',
+  haryana: 'Haryana', hr: 'Haryana',
+  uttarpradesh: 'Uttar Pradesh', up: 'Uttar Pradesh',
+  uttarakhand: 'Uttarakhand', uk: 'Uttarakhand', uttaranchal: 'Uttarakhand',
+  himachalpradesh: 'Himachal Pradesh', hp: 'Himachal Pradesh',
+  jammuandkashmir: 'Jammu and Kashmir', jammukashmir: 'Jammu and Kashmir', jk: 'Jammu and Kashmir',
+  ladakh: 'Ladakh',
+  chandigarh: 'Chandigarh', ch: 'Chandigarh',
+  madhyapradesh: 'Madhya Pradesh', mp: 'Madhya Pradesh',
+  chhattisgarh: 'Chhattisgarh', chattisgarh: 'Chhattisgarh', cg: 'Chhattisgarh',
+  bihar: 'Bihar', br: 'Bihar',
+  jharkhand: 'Jharkhand', jh: 'Jharkhand',
+  westbengal: 'West Bengal', wb: 'West Bengal',
+  odisha: 'Odisha', orissa: 'Odisha', od: 'Odisha',
+  assam: 'Assam', as: 'Assam',
+  arunachalpradesh: 'Arunachal Pradesh', ar: 'Arunachal Pradesh',
+  manipur: 'Manipur', mn: 'Manipur',
+  meghalaya: 'Meghalaya', ml: 'Meghalaya',
+  mizoram: 'Mizoram', mz: 'Mizoram',
+  nagaland: 'Nagaland', nl: 'Nagaland',
+  tripura: 'Tripura', tr: 'Tripura',
+  sikkim: 'Sikkim', sk: 'Sikkim',
+  andamanandnicobarislands: 'Andaman and Nicobar Islands', andaman: 'Andaman and Nicobar Islands',
+  lakshadweep: 'Lakshadweep',
+  dadraandnagarhavelianddamananddiu: 'Dadra and Nagar Haveli and Daman and Diu',
+}
+
+// Canonicalize a state for the Address. Tries Clinic State then Lead State; for
+// each, matches the despaced form and the part before a "-" (so "Tn-Chennai" →
+// "tn" → "Tamil Nadu"). Falls back to the raw value (which ERPNext may reject —
+// surfaced as a per-row error) when nothing matches.
+function canonState(clinicState, leadState) {
+  for (const raw of [clinicState, leadState]) {
+    const r = (raw || '').trim(); if (!r) continue
+    const low = r.toLowerCase().replace(/\s+/g, ' ').trim()
+    const variants = [low.replace(/[\s.]/g, '')]
+    if (low.includes('-')) variants.push(low.split('-')[0].replace(/[\s.]/g, ''))
+    for (const v of variants) { if (STATE_CANON[v]) return STATE_CANON[v] }
+  }
   return (clinicState || leadState || '').trim()
 }
 
@@ -53,7 +106,7 @@ function buildAddress(r, name, dr) {
   if (!a) return null
   return {
     address_title: a.title, address_type: a.type, address_line1: a.line1, address_line2: a.line2, address_line3: a.line3,
-    city: g(r, 'Dr. City (Clinic)'), state: pickState(g(r, 'Clinic State'), g(r, 'State')), pincode: g(r, 'Clinic Info - Pincode'),
+    city: g(r, 'Dr. City (Clinic)'), state: canonState(g(r, 'Clinic State'), g(r, 'State')), pincode: g(r, 'Clinic Info - Pincode'),
     country: CFG.COUNTRY, links: [{ link_doctype: 'Lead', link_name: name }],
   }
 }
