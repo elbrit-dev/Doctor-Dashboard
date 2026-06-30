@@ -53,6 +53,19 @@ export async function fetchLeadsByCode(codes, { addresses = true, onProgress } =
   return { doctors, found, requested: codes.length }
 }
 
+// Create/update/duplicate triage: send the parsed sheet rows, get back which
+// codes need creating, which exist (update), and the duplicate sets.
+export async function reconcileSheet(rows) {
+  const res = await fetch('/api/reconcile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ rows }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`)
+  return body
+}
+
 // CRM writes a review decision back to ERPNext (posts a comment on the Lead).
 // payload: { id, decision: 'ready'|'error', issues?: string[], note?: string, by?: string }
 export async function submitReview(payload) {

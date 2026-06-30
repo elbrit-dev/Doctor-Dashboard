@@ -13,6 +13,7 @@ import express from 'express'
 import cors from 'cors'
 import { DOCTOR_IDS } from './doctorIds.js'
 import { mapLead } from './mapLead.js'
+import { triage } from './triage.js'
 
 const PORT = process.env.PROXY_PORT || 8787
 const BASE = (process.env.ERPNEXT_URL || '').replace(/\/+$/, '')
@@ -134,6 +135,25 @@ app.post('/api/leads-by-code', async (req, res) => {
   } catch (err) {
     console.error('[proxy] bulk fetch failed:', err.message)
     res.status(502).json({ error: 'Bulk ERPNext fetch failed', detail: err.message })
+  }
+})
+
+// Create/update/duplicate triage: POST { rows } (parsed sheet) → fetch all coded
+// Leads once, then categorize the sheet locally.
+app.post('/api/reconcile', async (req, res) => {
+  if (!configured()) return res.status(503).json({ error: 'ERPNext not configured' })
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : []
+  if (rows.length === 0) return res.status(400).json({ error: 'rows[] is required' })
+  try {
+    const fields = encodeURIComponent(JSON.stringify(['name', 'custom_doctor_code']))
+    const filters = encodeURIComponent(JSON.stringify([['custom_doctor_code', 'is', 'set']]))
+    const r = await fetch(`${BASE}/api/resource/Lead?fields=${fields}&filters=${filters}&limit_page_length=0`, { headers: authHeaders })
+    if (!r.ok) throw new Error(`Lead list: HTTP ${r.status} ${r.statusText}`)
+    const uatLeads = (await r.json()).data || []
+    res.json({ source: `ERPNext · ${BASE}`, ...triage(rows, uatLeads) })
+  } catch (err) {
+    console.error('[proxy] reconcile failed:', err.message)
+    res.status(502).json({ error: 'ERPNext fetch failed', detail: err.message })
   }
 })
 

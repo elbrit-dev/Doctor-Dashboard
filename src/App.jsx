@@ -10,6 +10,7 @@ import IssuesPanel from './components/IssuesPanel.jsx'
 import DoctorTable from './components/DoctorTable.jsx'
 import DoctorDrawer from './components/DoctorDrawer.jsx'
 import ReconcileView from './components/ReconcileView.jsx'
+import TriageView from './components/TriageView.jsx'
 
 const EMPTY_FILTERS = { specialty: '', category: '', territory: '', check: '' }
 
@@ -90,6 +91,7 @@ export default function App() {
           <div className="segmented mode-tabs">
             <button className={mode === 'validate' ? 'active' : ''} onClick={() => setMode('validate')}>Validation</button>
             <button className={mode === 'reconcile' ? 'active' : ''} onClick={() => setMode('reconcile')}>Bulk reconciliation</button>
+            <button className={mode === 'triage' ? 'active' : ''} onClick={() => setMode('triage')}>Create / Update</button>
           </div>
           <ModeBadge mode={feed.mode} fetchedAt={feed.fetchedAt} />
           {mode === 'validate' && (
@@ -103,6 +105,8 @@ export default function App() {
 
       {mode === 'reconcile' ? (
         <ReconcileView live={feed.mode === 'live'} />
+      ) : mode === 'triage' ? (
+        <TriageView live={feed.mode === 'live'} />
       ) : (
       <>
       <KpiCards totals={totals} />
