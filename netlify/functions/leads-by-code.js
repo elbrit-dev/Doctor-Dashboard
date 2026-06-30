@@ -40,27 +40,24 @@ export const handler = async (event) => {
   const requested = new Set(clean)
   try {
     const leads = await fetchLeadsForCodes(clean)
-    const groups = {}
+    const primaries = {}
     for (const lead of leads) {
       const key = leadCode(lead)
-      if (key && requested.has(key)) (groups[key] = groups[key] || []).push(lead)
+      if (!key || !requested.has(key)) continue
+      if (!primaries[key] || lead.name === `DR-${key}`) primaries[key] = lead
     }
-    const primaries = Object.entries(groups).map(([key, list]) => ({
-      key, list, lead: list.find((l) => l.name === `DR-${key}`) || list[0],
-    }))
+    const list = Object.values(primaries)
     const addrMap = {}
     if (withAddresses) {
-      for (let i = 0; i < primaries.length; i += CONCURRENCY) {
-        const batch = primaries.slice(i, i + CONCURRENCY)
-        const results = await Promise.all(batch.map((p) => fetchAddresses(p.lead.name).catch(() => [])))
-        batch.forEach((p, j) => { addrMap[p.lead.name] = results[j] })
+      for (let i = 0; i < list.length; i += CONCURRENCY) {
+        const batch = list.slice(i, i + CONCURRENCY)
+        const results = await Promise.all(batch.map((l) => fetchAddresses(l.name).catch(() => [])))
+        batch.forEach((l, j) => { addrMap[l.name] = results[j] })
       }
     }
     const byCode = {}
-    for (const { key, list, lead } of primaries) {
-      const doc = mapLead(lead, addrMap[lead.name] || [])
-      doc._dup = list.map((l) => l.name)
-      byCode[key] = doc
+    for (const [key, lead] of Object.entries(primaries)) {
+      byCode[key] = mapLead(lead, addrMap[lead.name] || [])
     }
     return json(200, { requested: clean.length, found: Object.keys(byCode).length, doctors: byCode })
   } catch (err) {
@@ -73,13 +70,13 @@ const pad8 = (c) => stripZeros(c).padStart(8, '0')
 const leadCode = (l) => stripZeros(l.custom_doctor_code || String(l.name || '').replace(/^DR-?/i, ''))
 
 async function fetchLeadsForCodes(strippedCodes) {
-  const dcodes = []
-  for (const c of strippedCodes) dcodes.push(c, pad8(c))
+  const names = [], dcodes = []
+  for (const c of strippedCodes) { names.push(`DR-${c}`, `DR-${pad8(c)}`); dcodes.push(c, pad8(c)) }
   const seen = new Map()
   const collect = (rows) => { for (const l of rows || []) if (!seen.has(l.name)) seen.set(l.name, l) }
   await Promise.all([
+    queryLeadsIn('name', [...new Set(names)]).then(collect),
     queryLeadsIn('custom_doctor_code', [...new Set(dcodes)]).then(collect),
-    queryLeadsLike(strippedCodes).then(collect),
   ])
   return [...seen.values()]
 }
@@ -91,19 +88,6 @@ async function queryLeadsIn(field, values) {
     const filters = encodeURIComponent(JSON.stringify([[field, 'in', values.slice(i, i + LEAD_CHUNK)]]))
     const r = await fetch(`${BASE}/api/resource/Lead?filters=${filters}&fields=${fields}&limit_page_length=0`, { headers: authHeaders })
     if (!r.ok) throw new Error(`bulk ${field} chunk: HTTP ${r.status} ${r.statusText}`)
-    const j = await r.json()
-    if (Array.isArray(j.data)) out.push(...j.data)
-  }
-  return out
-}
-
-async function queryLeadsLike(strippedCodes) {
-  const out = []
-  const fields = encodeURIComponent(JSON.stringify(BULK_FIELDS))
-  for (let i = 0; i < strippedCodes.length; i += 50) {
-    const orf = encodeURIComponent(JSON.stringify(strippedCodes.slice(i, i + 50).map((c) => ['Lead', 'name', 'like', `%${c}%`])))
-    const r = await fetch(`${BASE}/api/resource/Lead?or_filters=${orf}&fields=${fields}&limit_page_length=0`, { headers: authHeaders })
-    if (!r.ok) throw new Error(`bulk like chunk: HTTP ${r.status} ${r.statusText}`)
     const j = await r.json()
     if (Array.isArray(j.data)) out.push(...j.data)
   }

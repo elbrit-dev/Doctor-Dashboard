@@ -32,9 +32,6 @@ const isBlank = (s) => s === '' || s == null
 // ---- field map: sheet column -> erp record field ----------------------------
 // `erp` reads from the mapped doctor object returned by the proxy.
 export const FIELDS = [
-  // Dr Code is matched (not value-compared): it's 'match' when one Lead exists,
-  // 'duplicate' when the same code exists as >1 Lead (e.g. DR-4444 + DR-00004444).
-  { key: 'drcode', label: 'Dr Code', kind: 'code' },
   { key: 'name', label: 'Name', sheet: 'Dr. Name', erp: (d) => d.firstName || d.leadName, norm: name },
   { key: 'qualification', label: 'Qualification', sheet: 'Qualification', erp: (d) => d.qualification, norm: text },
   { key: 'specialty', label: 'Speciality', sheet: 'Speciality', erp: (d) => d.specialty, norm: text },
@@ -126,25 +123,16 @@ export function reconcile(sheetRows, erpByCode, { includeAddress = true } = {}) 
     const c = code(row.code)
     const erp = erpByCode[c] || null
     const fields = {}
-    let mismatch = 0, missing = 0, dup = 0
+    let mismatch = 0, missing = 0
     if (erp) {
       const docName = row.raw['Dr. Name'] || erp.firstName || erp.leadName || ''
-      const dupNames = erp._dup || []
       for (const f of activeFields) {
-        let r
-        if (f.kind === 'code') {
-          r = dupNames.length > 1
-            ? { status: 'duplicate', sheet: c, erp: dupNames.join(', ') }
-            : { status: 'match', sheet: c, erp: erp.name }
-        } else if (f.kind === 'address') {
-          r = compareAddress(f, row.raw[f.sheet], erp.addresses || [], docName)
-        } else {
-          r = compareField(f, row.raw[f.sheet], f.erp(erp))
-        }
+        const r = f.kind === 'address'
+          ? compareAddress(f, row.raw[f.sheet], erp.addresses || [], docName)
+          : compareField(f, row.raw[f.sheet], f.erp(erp))
         fields[f.key] = r
         if (r.status === 'mismatch') mismatch++
         if (r.status === 'missing_erp') missing++
-        if (r.status === 'duplicate') dup++
       }
     }
     return {
@@ -156,21 +144,18 @@ export function reconcile(sheetRows, erpByCode, { includeAddress = true } = {}) 
       fields,
       mismatch,
       missing,
-      dup,
-      duplicateNames: (erp && erp._dup && erp._dup.length > 1) ? erp._dup : null,
-      hasIssue: !erp || mismatch > 0 || missing > 0 || dup > 0,
+      hasIssue: !erp || mismatch > 0 || missing > 0,
     }
   })
 
   const perField = {}
-  for (const f of activeFields) perField[f.key] = { mismatch: 0, missing: 0, duplicate: 0 }
+  for (const f of activeFields) perField[f.key] = { mismatch: 0, missing: 0 }
   for (const r of results) {
     if (!r.found) continue
     for (const f of activeFields) {
       const s = r.fields[f.key].status
       if (s === 'mismatch') perField[f.key].mismatch++
       if (s === 'missing_erp') perField[f.key].missing++
-      if (s === 'duplicate') perField[f.key].duplicate++
     }
   }
 
@@ -182,7 +167,6 @@ export function reconcile(sheetRows, erpByCode, { includeAddress = true } = {}) 
     withIssues: results.filter((r) => r.found && r.hasIssue).length,
     mismatches: results.reduce((s, r) => s + r.mismatch, 0),
     missing: results.reduce((s, r) => s + r.missing, 0),
-    duplicates: results.filter((r) => r.dup > 0).length,
     perField,
     addressChecked: includeAddress,
     activeFields: activeFields.map((f) => f.key),
