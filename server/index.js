@@ -14,6 +14,7 @@ import cors from 'cors'
 import { DOCTOR_IDS } from './doctorIds.js'
 import { mapLead } from './mapLead.js'
 import { triage } from './triage.js'
+import { runProcess } from './process.js'
 
 const PORT = process.env.PROXY_PORT || 8787
 const BASE = (process.env.ERPNEXT_URL || '').replace(/\/+$/, '')
@@ -150,6 +151,28 @@ app.post('/api/reconcile', async (req, res) => {
   } catch (err) {
     console.error('[proxy] reconcile failed:', err.message)
     res.status(502).json({ error: 'ERPNext fetch failed', detail: err.message })
+  }
+})
+
+// Batched CREATE of Leads (+addresses) from an uploaded sheet (ports the n8n
+// workflow's create path). POST { rows, offset?, batchSize? }. Stateless per
+// batch — the frontend drives the offset loop.
+app.post('/api/process', async (req, res) => {
+  if (!configured()) return res.status(503).json({ error: 'ERPNext not configured' })
+  const { rows, offset, batchSize } = req.body || {}
+  if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'rows[] is required' })
+  try {
+    const out = await runProcess({
+      base: BASE,
+      authHeaders,
+      rows,
+      offset: Number(offset) || 0,
+      batchSize: Number(batchSize) || 50,
+    })
+    res.json({ source: `ERPNext · ${BASE}`, action: 'create', ...out })
+  } catch (err) {
+    console.error('[proxy] process failed:', err.message)
+    res.status(502).json({ error: 'ERPNext request failed', detail: err.message })
   }
 })
 

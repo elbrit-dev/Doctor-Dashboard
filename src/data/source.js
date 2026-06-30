@@ -66,6 +66,20 @@ export async function reconcileSheet(rows) {
   return body
 }
 
+// Process one batch of an uploaded sheet: create new Leads (+ addresses) in
+// ERPNext UAT for codes not already there. Stateless per call — the caller
+// drives the offset loop until the response says { done: true }.
+export async function processBatch({ rows, offset = 0, batchSize = 50 }) {
+  const res = await fetch('/api/process', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ rows, offset, batchSize }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`)
+  return body
+}
+
 // CRM writes a review decision back to ERPNext (posts a comment on the Lead).
 // payload: { id, decision: 'ready'|'error', issues?: string[], note?: string, by?: string }
 export async function submitReview(payload) {
