@@ -161,8 +161,8 @@ export default function ReconcileView({ live }) {
                 ))}
               </div>
               <div className="filterbar__spacer" />
-              <button className="export-btn" onClick={() => exportIssues(data.results, cols)}>
-                <IconDownload width={15} height={15} /> Export issues
+              <button className="export-btn" onClick={() => exportIssues(data.results, cols)} title="Excel with two sheets: Issues only + Full comparison (Sheet vs UAT for every field)">
+                <IconDownload width={15} height={15} /> Export (issues + UAT)
               </button>
             </div>
 
@@ -257,22 +257,39 @@ function Kpi({ n, label, tone }) {
 const fmt = (v) => (v == null ? '' : String(v))
 
 function exportIssues(results, fields) {
-  const rows = []
+  // Sheet 1 — Issues only (mismatch / missing / not-found)
+  const issues = []
   for (const r of results) {
-    if (!r.found) { rows.push({ Code: r.code, Doctor: r.sheetName, Field: '(record)', Status: 'Not found in ERPNext', 'Sheet value': '', 'ERPNext value': '' }); continue }
+    if (!r.found) { issues.push({ Code: r.code, Doctor: r.sheetName, Field: '(record)', Status: 'Not found in ERPNext', 'Sheet value': '', 'UAT value': '' }); continue }
     for (const f of fields) {
       const c = r.fields[f.key]
       if (c.status === 'mismatch' || c.status === 'missing_erp') {
-        rows.push({
+        issues.push({
           Code: r.code, Doctor: r.sheetName, 'ERPNext ID': r.erpId,
           Field: f.label, Status: STATUS_META[c.status].label,
-          'Sheet value': fmt(c.sheet), 'ERPNext value': fmt(c.erp),
+          'Sheet value': fmt(c.sheet), 'UAT value': fmt(c.erp),
         })
       }
     }
   }
+
+  // Sheet 2 — Full comparison: every row, every field, Sheet vs UAT vs Status
+  // (so the validation result itself can be audited against the raw UAT data).
+  const full = results.map((r) => {
+    const row = { Code: r.code, 'Doctor (sheet)': r.sheetName, 'ERPNext ID': r.erpId || '', 'Found in UAT': r.found ? 'Yes' : 'No' }
+    if (r.found) {
+      for (const f of fields) {
+        const c = r.fields[f.key]
+        row[`${f.label} · Sheet`] = fmt(c.sheet)
+        row[`${f.label} · UAT`] = fmt(c.erp)
+        row[`${f.label} · Status`] = STATUS_META[c.status].label
+      }
+    }
+    return row
+  })
+
   const wb = XLSX.utils.book_new()
-  const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ Note: 'No issues found' }])
-  XLSX.utils.book_append_sheet(wb, ws, 'Issues')
-  XLSX.writeFile(wb, `reconciliation-issues-${new Date().toISOString().slice(0, 10)}.xlsx`)
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(issues.length ? issues : [{ Note: 'No issues found' }]), 'Issues')
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(full), 'Full comparison (Sheet vs UAT)')
+  XLSX.writeFile(wb, `reconciliation-${new Date().toISOString().slice(0, 10)}.xlsx`)
 }
