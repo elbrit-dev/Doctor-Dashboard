@@ -12,6 +12,7 @@ const STATUS_META = {
   missing_erp: { sym: '∅', cls: 'rc-missing', label: 'In sheet, not in dashboard (null)' },
   sheet_blank: { sym: '·', cls: 'rc-sheetblank', label: 'Only in dashboard (not in sheet)' },
   blank: { sym: '—', cls: 'rc-blank', label: 'Both empty' },
+  duplicate: { sym: '⎘', cls: 'rc-dup', label: 'Duplicate ID in UAT' },
 }
 
 export default function ReconcileView({ live }) {
@@ -95,7 +96,7 @@ export default function ReconcileView({ live }) {
       if (view === 'clean' && (!r.found || r.hasIssue)) return false
       if (fieldFilter && r.found) {
         const s = r.fields[fieldFilter]?.status
-        if (s !== 'mismatch' && s !== 'missing_erp') return false
+        if (s !== 'mismatch' && s !== 'missing_erp' && s !== 'duplicate') return false
       } else if (fieldFilter && !r.found) return false
       if (q && !(`${r.code} ${r.sheetName}`.toLowerCase().includes(q))) return false
       return true
@@ -158,6 +159,7 @@ export default function ReconcileView({ live }) {
             <Kpi n={data.summary.clean} label="Clean (all match)" tone="ok" />
             <Kpi n={data.summary.withIssues} label="With issues" tone="warning" />
             <Kpi n={data.summary.notFound} label="Not found in ERPNext" tone="error" />
+            <Kpi n={data.summary.duplicates} label="Duplicate IDs in UAT" tone="warning" />
             <Kpi n={data.summary.mismatches} label="Field mismatches" tone="warning" />
             <Kpi n={data.summary.missing} label="Missing in ERPNext" tone="error" />
           </div>
@@ -167,7 +169,7 @@ export default function ReconcileView({ live }) {
             <div className="rc-perfield">
               {cols.map((f) => {
                 const pf = data.summary.perField[f.key]
-                const total = pf.mismatch + pf.missing
+                const total = pf.mismatch + pf.missing + (pf.duplicate || 0)
                 return (
                   <button
                     key={f.key}
@@ -289,7 +291,13 @@ function Row({ r, fields, expanded, onToggle, reviewedAs, busy, onReview }) {
         <tr className="rc-detail-row">
           <td colSpan={fields.length + 2}>
             <div className="rc-detail">
-              {fields.filter((f) => ['mismatch', 'missing_erp'].includes(r.fields[f.key].status)).map((f) => {
+              {r.duplicateNames && (
+                <div className="rc-detail__item">
+                  <span className="rc-tag rc-dup">Duplicate ID · same doctor exists {r.duplicateNames.length}× in UAT</span>
+                  <div className="rc-detail__vals">{r.duplicateNames.join('  ·  ')} — treated as one for field comparison.</div>
+                </div>
+              )}
+              {fields.filter((f) => ['mismatch', 'missing_erp', 'duplicate'].includes(r.fields[f.key].status) && f.kind !== 'code').map((f) => {
                 const c = r.fields[f.key]
                 return (
                   <div key={f.key} className="rc-detail__item">
@@ -334,7 +342,7 @@ function exportIssues(results, fields) {
     if (!r.found) { issues.push({ Code: r.code, Doctor: r.sheetName, Field: '(record)', Status: 'Not found in ERPNext', 'Sheet value': '', 'UAT value': '' }); continue }
     for (const f of fields) {
       const c = r.fields[f.key]
-      if (c.status === 'mismatch' || c.status === 'missing_erp') {
+      if (c.status === 'mismatch' || c.status === 'missing_erp' || c.status === 'duplicate') {
         issues.push({
           Code: r.code, Doctor: r.sheetName, 'ERPNext ID': r.erpId,
           Field: f.label, Status: STATUS_META[c.status].label,

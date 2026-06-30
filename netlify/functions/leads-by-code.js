@@ -36,37 +36,74 @@ export const handler = async (event) => {
   if (codes.length === 0) return json(400, { error: 'codes[] is required' })
   const withAddresses = body.addresses !== false
 
-  const clean = [...new Set(codes.map((c) => String(c).trim().replace(/^0+/, '')).filter(Boolean))]
-  const names = clean.map((c) => `DR-${c}`)
+  const clean = [...new Set(codes.map(stripZeros).filter(Boolean))]
+  const requested = new Set(clean)
   try {
-    const leads = await fetchLeadsByNames(names)
+    const leads = await fetchLeadsForCodes(clean)
+    const groups = {}
+    for (const lead of leads) {
+      const key = leadCode(lead)
+      if (key && requested.has(key)) (groups[key] = groups[key] || []).push(lead)
+    }
+    const primaries = Object.entries(groups).map(([key, list]) => ({
+      key, list, lead: list.find((l) => l.name === `DR-${key}`) || list[0],
+    }))
     const addrMap = {}
     if (withAddresses) {
-      for (let i = 0; i < leads.length; i += CONCURRENCY) {
-        const batch = leads.slice(i, i + CONCURRENCY)
-        const results = await Promise.all(batch.map((l) => fetchAddresses(l.name).catch(() => [])))
-        batch.forEach((l, j) => { addrMap[l.name] = results[j] })
+      for (let i = 0; i < primaries.length; i += CONCURRENCY) {
+        const batch = primaries.slice(i, i + CONCURRENCY)
+        const results = await Promise.all(batch.map((p) => fetchAddresses(p.lead.name).catch(() => [])))
+        batch.forEach((p, j) => { addrMap[p.lead.name] = results[j] })
       }
     }
     const byCode = {}
-    for (const lead of leads) {
+    for (const { key, list, lead } of primaries) {
       const doc = mapLead(lead, addrMap[lead.name] || [])
-      byCode[String(doc.code).replace(/^0+/, '')] = doc
+      doc._dup = list.map((l) => l.name)
+      byCode[key] = doc
     }
-    return json(200, { requested: clean.length, found: leads.length, doctors: byCode })
+    return json(200, { requested: clean.length, found: Object.keys(byCode).length, doctors: byCode })
   } catch (err) {
     return json(502, { error: 'Bulk ERPNext fetch failed', detail: err.message })
   }
 }
 
-async function fetchLeadsByNames(names) {
+const stripZeros = (c) => String(c ?? '').trim().replace(/^0+/, '')
+const pad8 = (c) => stripZeros(c).padStart(8, '0')
+const leadCode = (l) => stripZeros(l.custom_doctor_code || String(l.name || '').replace(/^DR-?/i, ''))
+
+async function fetchLeadsForCodes(strippedCodes) {
+  const dcodes = []
+  for (const c of strippedCodes) dcodes.push(c, pad8(c))
+  const seen = new Map()
+  const collect = (rows) => { for (const l of rows || []) if (!seen.has(l.name)) seen.set(l.name, l) }
+  await Promise.all([
+    queryLeadsIn('custom_doctor_code', [...new Set(dcodes)]).then(collect),
+    queryLeadsLike(strippedCodes).then(collect),
+  ])
+  return [...seen.values()]
+}
+
+async function queryLeadsIn(field, values) {
   const out = []
-  for (let i = 0; i < names.length; i += LEAD_CHUNK) {
-    const chunk = names.slice(i, i + LEAD_CHUNK)
-    const filters = encodeURIComponent(JSON.stringify([['name', 'in', chunk]]))
-    const fields = encodeURIComponent(JSON.stringify(BULK_FIELDS))
+  const fields = encodeURIComponent(JSON.stringify(BULK_FIELDS))
+  for (let i = 0; i < values.length; i += LEAD_CHUNK) {
+    const filters = encodeURIComponent(JSON.stringify([[field, 'in', values.slice(i, i + LEAD_CHUNK)]]))
     const r = await fetch(`${BASE}/api/resource/Lead?filters=${filters}&fields=${fields}&limit_page_length=0`, { headers: authHeaders })
-    if (!r.ok) throw new Error(`bulk chunk: HTTP ${r.status} ${r.statusText}`)
+    if (!r.ok) throw new Error(`bulk ${field} chunk: HTTP ${r.status} ${r.statusText}`)
+    const j = await r.json()
+    if (Array.isArray(j.data)) out.push(...j.data)
+  }
+  return out
+}
+
+async function queryLeadsLike(strippedCodes) {
+  const out = []
+  const fields = encodeURIComponent(JSON.stringify(BULK_FIELDS))
+  for (let i = 0; i < strippedCodes.length; i += 50) {
+    const orf = encodeURIComponent(JSON.stringify(strippedCodes.slice(i, i + 50).map((c) => ['Lead', 'name', 'like', `%${c}%`])))
+    const r = await fetch(`${BASE}/api/resource/Lead?or_filters=${orf}&fields=${fields}&limit_page_length=0`, { headers: authHeaders })
+    if (!r.ok) throw new Error(`bulk like chunk: HTTP ${r.status} ${r.statusText}`)
     const j = await r.json()
     if (Array.isArray(j.data)) out.push(...j.data)
   }
