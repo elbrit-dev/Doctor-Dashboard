@@ -87,6 +87,29 @@ export function exportDoctorsExcel(records, stamp) {
   XLSX.writeFile(wb, `doctor-validation-${stamp || 'export'}.xlsx`)
 }
 
+// Issues-only export: just the records that have errors/warnings, with a concise
+// list of what's wrong — easy for the CRM team to find and act on.
+export function exportIssuesExcel(records, stamp) {
+  const issues = records
+    .filter((r) => (r.counts?.error ?? 0) > 0 || (r.counts?.warning ?? 0) > 0)
+    .map((r) => ({
+      'Doctor ID': r.name,
+      'Doctor Name': dash(r.leadName && r.leadName.trim()),
+      Speciality: dash(r.specialty),
+      Territory: dash(r.territory),
+      Status: r.status === 'ready' ? 'Ready' : r.status === 'error' ? 'Has errors' : 'Review',
+      Errors: r.counts?.error ?? 0,
+      Warnings: r.counts?.warning ?? 0,
+      'Quality Score': r.score ?? '-',
+      'Issues Found': r.issues?.length ? r.issues.map((i) => i.label).join('; ') : '-',
+    }))
+  const wb = XLSX.utils.book_new()
+  const ws = XLSX.utils.json_to_sheet(issues.length ? issues : [{ Note: 'No issues — all records passed' }])
+  ws['!cols'] = autoWidth(issues.length ? issues : [{ Note: '' }])
+  XLSX.utils.book_append_sheet(wb, ws, 'Issues')
+  XLSX.writeFile(wb, `doctor-issues-${stamp || 'export'}.xlsx`)
+}
+
 function autoWidth(rows) {
   if (!rows.length) return []
   return Object.keys(rows[0]).map((k) => {

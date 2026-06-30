@@ -9,7 +9,7 @@ const STATUS_TABS = [
 
 export default function DoctorTable({
   records, totalCount, totals, query, setQuery, status, setStatus,
-  filters, setFilter, options, activeFilterCount, resetAll, selected, onSelect, onExport,
+  filters, setFilter, options, activeFilterCount, resetAll, selected, onSelect, onExport, onExportIssues, onExportIssuesUAT,
 }) {
   const counts = {
     all: totals.doctors,
@@ -51,8 +51,14 @@ export default function DoctorTable({
         {activeFilterCount > 0 && (
           <button className="reset-btn" onClick={resetAll}>Reset{activeFilterCount > 1 ? ` (${activeFilterCount})` : ''} ✕</button>
         )}
+        <button className="export-btn" onClick={onExportIssues} title="Download only the records that have errors/warnings (concise issue list)">
+          <IconDownload width={15} height={15} /> Issues
+        </button>
+        <button className="export-btn" onClick={onExportIssuesUAT} title="Download issue records with their full UAT field data">
+          <IconDownload width={15} height={15} /> Issues + UAT
+        </button>
         <button className="export-btn" onClick={onExport} title={`Download all ${totalCount} doctors as Excel`}>
-          <IconDownload width={15} height={15} /> Export Excel
+          <IconDownload width={15} height={15} /> Export all
         </button>
       </div>
 

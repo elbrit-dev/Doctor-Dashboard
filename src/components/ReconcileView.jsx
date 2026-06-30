@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { parseSheet, cleanCodes } from '../lib/parseSheet.js'
-import { fetchLeadsByCode } from '../data/source.js'
+import { fetchLeadsByCode, submitReview } from '../data/source.js'
 import { reconcile, FIELDS } from '../lib/reconcile.js'
 import { IconDownload, IconSearch } from './icons.jsx'
 
@@ -27,6 +27,44 @@ export default function ReconcileView({ live }) {
   const [page, setPage] = useState(0)
   const [expanded, setExpanded] = useState(null)
   const [checkAddress, setCheckAddress] = useState(true)
+  const [reviewed, setReviewed] = useState({}) // code -> 'ready' | 'error'
+  const [reviewBusy, setReviewBusy] = useState(null) // a code, or 'bulk'
+  const [bulkProg, setBulkProg] = useState(null)
+
+  const issueList = (r) =>
+    cols.filter((f) => ['mismatch', 'missing_erp'].includes(r.fields[f.key]?.status))
+      .map((f) => `${f.label}: sheet "${fmt(r.fields[f.key].sheet)}" / UAT "${fmt(r.fields[f.key].erp)}"`)
+
+  const reviewRow = async (r, decision) => {
+    if (!r.erpId) return
+    setReviewBusy(r.code)
+    try {
+      await submitReview({ id: r.erpId, decision, issues: decision === 'error' ? issueList(r) : [], by: 'it@elbrit.org' })
+      setReviewed((m) => ({ ...m, [r.code]: decision }))
+    } catch (e) {
+      window.alert('Review failed: ' + e.message)
+    } finally {
+      setReviewBusy(null)
+    }
+  }
+
+  const bulkReadyClean = async () => {
+    const clean = data.results.filter((r) => r.found && !r.hasIssue && reviewed[r.code] !== 'ready')
+    if (clean.length === 0) return
+    if (!window.confirm(`Post a "Ready" review comment to ${clean.length} clean doctor(s) in UAT? This writes to ERPNext.`)) return
+    setReviewBusy('bulk'); setBulkProg({ done: 0, total: clean.length })
+    const CONC = 6
+    for (let i = 0; i < clean.length; i += CONC) {
+      const batch = clean.slice(i, i + CONC)
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.all(batch.map((r) =>
+        submitReview({ id: r.erpId, decision: 'ready', by: 'it@elbrit.org' })
+          .then(() => setReviewed((m) => ({ ...m, [r.code]: 'ready' })))
+          .catch(() => {})))
+      setBulkProg({ done: Math.min(i + CONC, clean.length), total: clean.length })
+    }
+    setReviewBusy(null); setBulkProg(null)
+  }
 
   const onFile = async (e) => {
     const file = e.target.files?.[0]
@@ -167,6 +205,16 @@ export default function ReconcileView({ live }) {
               <button className="export-btn" onClick={() => exportUAT(data.results, cols)} title="Excel of the UAT values only, for the codes in this sheet">
                 <IconDownload width={15} height={15} /> Export UAT
               </button>
+              <button
+                className="btn btn--ready"
+                onClick={bulkReadyClean}
+                disabled={reviewBusy != null || data.summary.clean === 0}
+                title="Post a Ready review comment in UAT for every clean (all-match) doctor"
+              >
+                {reviewBusy === 'bulk' && bulkProg
+                  ? `Reviewing ${bulkProg.done}/${bulkProg.total}…`
+                  : `✅ Bulk review clean (${data.summary.clean})`}
+              </button>
             </div>
 
             <div className="table-wrap">
@@ -180,7 +228,14 @@ export default function ReconcileView({ live }) {
                 </thead>
                 <tbody>
                   {pageRows.map((r) => (
-                    <Row key={r.code} r={r} fields={cols} expanded={expanded === r.code} onToggle={() => setExpanded(expanded === r.code ? null : r.code)} />
+                    <Row
+                      key={r.code} r={r} fields={cols}
+                      expanded={expanded === r.code}
+                      onToggle={() => setExpanded(expanded === r.code ? null : r.code)}
+                      reviewedAs={reviewed[r.code]}
+                      busy={reviewBusy === r.code}
+                      onReview={reviewRow}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -201,7 +256,7 @@ export default function ReconcileView({ live }) {
   )
 }
 
-function Row({ r, fields, expanded, onToggle }) {
+function Row({ r, fields, expanded, onToggle, reviewedAs, busy, onReview }) {
   if (!r.found) {
     return (
       <tr className="rc-notfound" onClick={onToggle}>
@@ -215,7 +270,11 @@ function Row({ r, fields, expanded, onToggle }) {
     <>
       <tr className={r.hasIssue ? 'rc-hasissue' : ''} onClick={onToggle}>
         <td className="code">{r.code}</td>
-        <td><div className="docname">{r.sheetName || '—'}</div><div className="code">{r.erpId}</div></td>
+        <td>
+          <div className="docname">{r.sheetName || '—'}</div>
+          <div className="code">{r.erpId}</div>
+          {reviewedAs && <span className={`review-chip ${reviewedAs}`} style={{ marginTop: 4 }}>{reviewedAs === 'ready' ? '✅ Ready' : '⚠️ Error'}</span>}
+        </td>
         {fields.map((f) => {
           const cell = r.fields[f.key]
           const m = STATUS_META[cell.status]
@@ -240,6 +299,15 @@ function Row({ r, fields, expanded, onToggle }) {
                 )
               })}
               {r.mismatch + r.missing === 0 && <span className="card__hint">All fields match. Address record: {r.addressCreated ? 'created' : 'not created'}.</span>}
+              <div className="reviewbox__actions" style={{ marginTop: 4 }}>
+                <button className="btn btn--ready" disabled={busy} onClick={(e) => { e.stopPropagation(); onReview(r, 'ready') }}>
+                  {busy ? 'Saving…' : '✅ Mark Ready'}
+                </button>
+                <button className="btn btn--error" disabled={busy} onClick={(e) => { e.stopPropagation(); onReview(r, 'error') }}>
+                  ⚠️ Report Error{r.mismatch + r.missing > 0 ? ` (${r.mismatch + r.missing})` : ''}
+                </button>
+                {reviewedAs && <span className={`review-chip ${reviewedAs}`}>{reviewedAs === 'ready' ? '✅ Reviewed Ready' : '⚠️ Reviewed Error'}</span>}
+              </div>
             </div>
           </td>
         </tr>
