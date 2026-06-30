@@ -11,13 +11,24 @@ import { transformRow } from './transform.js'
 import { fetchDoctorLeads, leadCode } from './leadIndex.js'
 
 // ---- ERPNext reads ----------------------------------------------------------
+// GET that surfaces the ERPNext error body (Frappe returns the real reason —
+// e.g. a PermissionError on Employee — in the response, not just the status).
+async function getJSON(url, headers, label) {
+  const r = await fetch(url, { headers })
+  if (r.ok) return r.json()
+  let body = ''
+  try { body = await r.text() } catch { /* ignore */ }
+  let detail = ''
+  try { const j = JSON.parse(body); detail = j.exception || j.message || (j._server_messages || '') } catch { detail = body }
+  detail = String(detail).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300)
+  throw new Error(`${label}: HTTP ${r.status} ${r.statusText}${detail ? ` — ${detail}` : ''}`)
+}
+
 async function fetchEmployees(base, headers, empCodes) {
   if (empCodes.length === 0) return {}
   const fields = encodeURIComponent(JSON.stringify(['name', 'role_id', 'custom_role_profile', 'department', 'fsl_hq']))
   const filters = encodeURIComponent(JSON.stringify([['name', 'in', empCodes]]))
-  const r = await fetch(`${base}/api/resource/Employee?fields=${fields}&filters=${filters}&limit_page_length=0`, { headers })
-  if (!r.ok) throw new Error(`Employee fetch: HTTP ${r.status} ${r.statusText}`)
-  const j = await r.json()
+  const j = await getJSON(`${base}/api/resource/Employee?fields=${fields}&filters=${filters}&limit_page_length=0`, headers, 'Employee fetch')
   const map = {}
   for (const e of (j.data || [])) map[e.name] = e
   return map
