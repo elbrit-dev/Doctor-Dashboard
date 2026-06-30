@@ -164,6 +164,9 @@ export default function ReconcileView({ live }) {
               <button className="export-btn" onClick={() => exportIssues(data.results, cols)} title="Excel with two sheets: Issues only + Full comparison (Sheet vs UAT for every field)">
                 <IconDownload width={15} height={15} /> Export (issues + UAT)
               </button>
+              <button className="export-btn" onClick={() => exportUAT(data.results, cols)} title="Excel of the UAT values only, for the codes in this sheet">
+                <IconDownload width={15} height={15} /> Export UAT
+              </button>
             </div>
 
             <div className="table-wrap">
@@ -292,4 +295,16 @@ function exportIssues(results, fields) {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(issues.length ? issues : [{ Note: 'No issues found' }]), 'Issues')
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(full), 'Full comparison (Sheet vs UAT)')
   XLSX.writeFile(wb, `reconciliation-${new Date().toISOString().slice(0, 10)}.xlsx`)
+}
+
+// UAT data only — the live ERPNext value of each field, for the sheet's codes.
+function exportUAT(results, fields) {
+  const rows = results.map((r) => {
+    const row = { Code: r.code, 'Doctor (sheet)': r.sheetName, 'ERPNext ID': r.erpId || '', 'Found in UAT': r.found ? 'Yes' : 'No' }
+    if (r.found) for (const f of fields) row[f.label] = fmt(r.fields[f.key].erp)
+    return row
+  })
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'UAT data')
+  XLSX.writeFile(wb, `uat-data-${new Date().toISOString().slice(0, 10)}.xlsx`)
 }
