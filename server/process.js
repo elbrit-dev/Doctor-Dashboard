@@ -7,7 +7,8 @@
 // ALL existing coded Leads) so re-running a batch never double-creates: a code
 // created on the previous pass now shows up as `skip`.
 
-import { transformRow, strip } from './transform.js'
+import { transformRow } from './transform.js'
+import { fetchDoctorLeads, leadCode } from './leadIndex.js'
 
 // ---- ERPNext reads ----------------------------------------------------------
 async function fetchEmployees(base, headers, empCodes) {
@@ -23,17 +24,14 @@ async function fetchEmployees(base, headers, empCodes) {
 }
 
 async function fetchExistingCodes(base, headers) {
-  const fields = encodeURIComponent(JSON.stringify(['name', 'custom_doctor_code']))
-  const filters = encodeURIComponent(JSON.stringify([['custom_doctor_code', 'is', 'set']]))
-  const r = await fetch(`${base}/api/resource/Lead?fields=${fields}&filters=${filters}&limit_page_length=0`, { headers })
-  if (!r.ok) throw new Error(`Lead fetch: HTTP ${r.status} ${r.statusText}`)
-  const j = await r.json()
+  const leads = await fetchDoctorLeads(base, headers)
   const set = new Set(); const names = new Map() // normalized code -> [Lead names]
-  for (const x of (j.data || [])) {
-    const c = strip(x.custom_doctor_code)
+  for (const l of leads) {
+    const c = leadCode(l)
+    if (!c) continue
     set.add(c)
     if (!names.has(c)) names.set(c, [])
-    names.get(c).push(x.name)
+    names.get(c).push(l.name)
   }
   return { set, names }
 }

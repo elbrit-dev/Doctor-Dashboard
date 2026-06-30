@@ -7,6 +7,7 @@
 // The ERPNext token stays server-side. Reachable at /api/reconcile via netlify.toml.
 
 import { triage } from '../../server/triage.js'
+import { fetchDoctorLeads } from '../../server/leadIndex.js'
 
 const BASE = (process.env.ERPNEXT_URL || '').replace(/\/+$/, '')
 // Accept a single ERPNEXT_TOKEN ("key:secret") or separate key + secret.
@@ -27,18 +28,9 @@ export const handler = async (event) => {
   const rows = Array.isArray(body.rows) ? body.rows : []
   if (rows.length === 0) return json(400, { error: 'rows[] is required' })
   try {
-    const uatLeads = await fetchAllCodedLeads()
+    const uatLeads = await fetchDoctorLeads(BASE, authHeaders)
     return json(200, { source: `ERPNext · ${BASE}`, ...triage(rows, uatLeads) })
   } catch (err) {
     return json(502, { error: 'ERPNext fetch failed', detail: err.message })
   }
-}
-
-async function fetchAllCodedLeads() {
-  const fields = encodeURIComponent(JSON.stringify(['name', 'custom_doctor_code']))
-  const filters = encodeURIComponent(JSON.stringify([['custom_doctor_code', 'is', 'set']]))
-  const r = await fetch(`${BASE}/api/resource/Lead?fields=${fields}&filters=${filters}&limit_page_length=0`, { headers: authHeaders })
-  if (!r.ok) throw new Error(`Lead list: HTTP ${r.status} ${r.statusText}`)
-  const j = await r.json()
-  return Array.isArray(j.data) ? j.data : []
 }

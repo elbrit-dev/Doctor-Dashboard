@@ -15,6 +15,7 @@ import { DOCTOR_IDS } from './doctorIds.js'
 import { mapLead } from './mapLead.js'
 import { triage } from './triage.js'
 import { runProcess } from './process.js'
+import { fetchDoctorLeads } from './leadIndex.js'
 
 const PORT = process.env.PROXY_PORT || 8787
 const BASE = (process.env.ERPNEXT_URL || '').replace(/\/+$/, '')
@@ -142,11 +143,7 @@ app.post('/api/reconcile', async (req, res) => {
   const rows = Array.isArray(req.body?.rows) ? req.body.rows : []
   if (rows.length === 0) return res.status(400).json({ error: 'rows[] is required' })
   try {
-    const fields = encodeURIComponent(JSON.stringify(['name', 'custom_doctor_code']))
-    const filters = encodeURIComponent(JSON.stringify([['custom_doctor_code', 'is', 'set']]))
-    const r = await fetch(`${BASE}/api/resource/Lead?fields=${fields}&filters=${filters}&limit_page_length=0`, { headers: authHeaders })
-    if (!r.ok) throw new Error(`Lead list: HTTP ${r.status} ${r.statusText}`)
-    const uatLeads = (await r.json()).data || []
+    const uatLeads = await fetchDoctorLeads(BASE, authHeaders)
     res.json({ source: `ERPNext · ${BASE}`, ...triage(rows, uatLeads) })
   } catch (err) {
     console.error('[proxy] reconcile failed:', err.message)
