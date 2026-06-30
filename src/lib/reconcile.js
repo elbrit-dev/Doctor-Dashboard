@@ -52,11 +52,9 @@ export const FIELDS = [
   { key: 'caddr1', label: 'Clinic Addr 1', sheet: 'Clinic Info - Address 1', kind: 'address', pool: 'text', norm: text },
   { key: 'caddr2', label: 'Clinic Addr 2', sheet: 'Clinic Info - Address 2', kind: 'address', pool: 'text', norm: text },
   { key: 'caddr3', label: 'Clinic Addr 3', sheet: 'Clinic Info - Address 3', kind: 'address', pool: 'text', norm: text },
-  { key: 'cstate', label: 'Clinic State', sheet: 'Clinic State', kind: 'address', pool: 'state', norm: state },
   { key: 'cpin', label: 'Clinic Pincode', sheet: 'Clinic Info - Pincode', kind: 'address', pool: 'pincode', norm: pincode },
   { key: 'raddr1', label: 'Resi. Addr 1', sheet: 'Residence Info - Address 1', kind: 'address', pool: 'text', norm: text },
   { key: 'rcity', label: 'Resi. City', sheet: 'Residence Info - City', kind: 'address', pool: 'city', norm: text },
-  { key: 'rstate', label: 'Resi. State', sheet: 'Residence Info - State', kind: 'address', pool: 'state', norm: state },
   { key: 'rpin', label: 'Resi. Pincode', sheet: 'Residence Info - Pincode', kind: 'address', pool: 'pincode', norm: pincode },
 ]
 
@@ -80,25 +78,42 @@ function compareField(field, sheetRaw, erpRaw) {
   return { status: a === b ? 'match' : 'mismatch', sheet: sheetRaw, erp: erpRaw }
 }
 
-// Compare a sheet address line against the pool of values across ALL the
-// doctor's ERPNext addresses. status: blank / missing_erp / match / mismatch.
-function compareAddress(field, sheetRaw, addresses) {
+const WORD_OVERLAP = 0.6 // sheet address words found in ERPNext to count as a match
+const words = (s) => text(s).split(/\s+/).filter((w) => w.length > 1)
+
+// Compare a sheet address line against ALL of the doctor's ERPNext addresses.
+// status: blank / missing_erp / match / mismatch.
+function compareAddress(field, sheetRaw, addresses, docName) {
   const a = field.norm(sheetRaw)
   if (isBlank(a)) return { status: 'blank', sheet: sheetRaw, erp: '' }
 
-  let raw
-  if (field.pool === 'state') raw = addresses.map((x) => x.state)
-  else if (field.pool === 'pincode') raw = addresses.map((x) => x.pincode)
-  else if (field.pool === 'city') raw = addresses.map((x) => x.city)
-  else raw = addresses.flatMap((x) => [x.title, x.line1, x.line2, x.city, x.county]) // 'text'
+  // ----- exact-value pools: pincode, state, city -----
+  if (field.pool !== 'text') {
+    const raw = field.pool === 'pincode' ? addresses.map((x) => x.pincode)
+      : field.pool === 'state' ? addresses.map((x) => x.state)
+        : addresses.map((x) => x.city)
+    const present = raw.filter((v) => !isBlank(field.norm(v)))
+    const set = new Set(present.map((v) => field.norm(v)))
+    const disp = [...new Set(present.map(String))].join(' | ')
+    if (set.size === 0) return { status: 'missing_erp', sheet: sheetRaw, erp: '' }
+    return { status: set.has(a) ? 'match' : 'mismatch', sheet: sheetRaw, erp: disp }
+  }
 
-  const present = raw.filter((v) => !isBlank(field.norm(v)))
-  const set = new Set(present.map((v) => field.norm(v)))
-  const disp = [...new Set(present.map((v) => String(v)))].join(' | ')
+  // ----- free-text address lines (word-overlap, formatting-insensitive) -----
+  // If the cell is just the doctor's name (not a real address), skip it.
+  if (name(a) === name(docName)) return { status: 'blank', sheet: sheetRaw, erp: '' }
 
-  if (set.size === 0) return { status: 'missing_erp', sheet: sheetRaw, erp: '' } // nothing in dashboard
-  if (set.has(a)) return { status: 'match', sheet: sheetRaw, erp: disp }
-  return { status: 'mismatch', sheet: sheetRaw, erp: disp }
+  // All words across every ERPNext address field — the sheet may combine into
+  // one cell what ERPNext splits across title/line1/line2/city.
+  const erpVals = addresses.flatMap((x) => [x.title, x.line1, x.line2, x.city, x.county]).filter((v) => !isBlank(text(v)))
+  const erpWords = new Set(erpVals.flatMap(words))
+  const disp = [...new Set(erpVals.map((v) => String(v).trim()))].join(' | ')
+  if (erpWords.size === 0) return { status: 'missing_erp', sheet: sheetRaw, erp: '' }
+
+  const sheetWords = [...new Set(words(a))]
+  if (sheetWords.length === 0) return { status: 'blank', sheet: sheetRaw, erp: disp }
+  const hit = sheetWords.filter((w) => erpWords.has(w)).length
+  return { status: hit / sheetWords.length >= WORD_OVERLAP ? 'match' : 'mismatch', sheet: sheetRaw, erp: disp }
 }
 
 // sheetRows: [{ code, raw }]; erpByCode: { code -> mapped doctor }
@@ -110,9 +125,10 @@ export function reconcile(sheetRows, erpByCode, { includeAddress = true } = {}) 
     const fields = {}
     let mismatch = 0, missing = 0
     if (erp) {
+      const docName = row.raw['Dr. Name'] || erp.firstName || erp.leadName || ''
       for (const f of activeFields) {
         const r = f.kind === 'address'
-          ? compareAddress(f, row.raw[f.sheet], erp.addresses || [])
+          ? compareAddress(f, row.raw[f.sheet], erp.addresses || [], docName)
           : compareField(f, row.raw[f.sheet], f.erp(erp))
         fields[f.key] = r
         if (r.status === 'mismatch') mismatch++
