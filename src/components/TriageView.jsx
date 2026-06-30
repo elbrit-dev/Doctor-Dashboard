@@ -192,6 +192,28 @@ export default function TriageView({ live }) {
             disabled={running}
             onExport={() => exportRows(data.create, 'to-create')}
           />
+
+          <ActionPanel
+            selectedCount={selected.size}
+            running={running}
+            runProg={runProg}
+            runReport={runReport}
+            runError={runError}
+            onRun={runCreate}
+            canValidate={validateRows.length > 0}
+            showValidate={showValidate}
+            onValidate={() => setShowValidate((v) => !v)}
+          />
+
+          {showValidate && validateRows.length > 0 && (
+            <div className="stack" style={{ gap: 10 }}>
+              <div className="section-label" style={{ marginBottom: 0 }}>
+                Validation — {validateRows.length} created doctor(s) compared field-by-field against UAT
+              </div>
+              <ReconcileView live={live} embedded rows={validateRows} />
+            </div>
+          )}
+
           <div className="stack" style={{ gap: 10 }}>
             <div className="section-label" style={{ marginBottom: 0 }}>
               To update — already in UAT ({data.counts.update}) · compared field-by-field below
@@ -229,27 +251,6 @@ export default function TriageView({ live }) {
               </div>
             )}
           </div>
-
-          <ActionPanel
-            selectedCount={selected.size}
-            running={running}
-            runProg={runProg}
-            runReport={runReport}
-            runError={runError}
-            onRun={runCreate}
-            canValidate={validateRows.length > 0}
-            showValidate={showValidate}
-            onValidate={() => setShowValidate((v) => !v)}
-          />
-
-          {showValidate && validateRows.length > 0 && (
-            <div className="stack" style={{ gap: 10 }}>
-              <div className="section-label" style={{ marginBottom: 0 }}>
-                Validation — {validateRows.length} created doctor(s) compared field-by-field against UAT
-              </div>
-              <ReconcileView live={live} embedded rows={validateRows} />
-            </div>
-          )}
         </>
       )}
     </div>
