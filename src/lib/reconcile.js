@@ -50,17 +50,25 @@ export const FIELDS = [
   { key: 'latitude', label: 'Latitude', sheet: 'Standardize Latitude 1', erp: (d) => d.latitude, norm: 'num' },
   { key: 'longitude', label: 'Longitude', sheet: 'Standardize Longitude 1', erp: (d) => d.longitude, norm: 'num' },
 
-  // ---- address lines (haystack match against ALL of the doctor's addresses) ----
-  // Extra ERPNext addresses (e.g. a separate "Doctor" address) never cause a flag;
-  // they just add to the pool a sheet value can match against.
-  { key: 'caddr1', label: 'Clinic Addr 1', sheet: 'Clinic Info - Address 1', kind: 'address', pool: 'text', norm: text },
-  { key: 'caddr2', label: 'Clinic Addr 2', sheet: 'Clinic Info - Address 2', kind: 'address', pool: 'text', norm: text },
-  { key: 'caddr3', label: 'Clinic Addr 3', sheet: 'Clinic Info - Address 3', kind: 'address', pool: 'text', norm: text },
+  // ---- address (haystack match against ALL of the doctor's addresses) ----
+  // The sheet splits one address across 3 lines; ERPNext's Address doctype has
+  // only 2 lines (line1 + line2, no line3). Comparing line-by-line therefore
+  // false-flags the 3rd fragment, so we check the WHOLE clinic/residence address
+  // as one value (word-overlap ≥ 60%) against all of the doctor's address text.
+  // Extra ERPNext addresses (e.g. a separate "Doctor" address) only add to the
+  // pool a sheet value can match against; they never cause a flag.
+  { key: 'caddr', label: 'Clinic Address', sheet: ['Clinic Info - Address 1', 'Clinic Info - Address 2', 'Clinic Info - Address 3'], kind: 'address', pool: 'text', norm: text },
   { key: 'cpin', label: 'Clinic Pincode', sheet: 'Clinic Info - Pincode', kind: 'address', pool: 'pincode', norm: pincode },
-  { key: 'raddr1', label: 'Resi. Addr 1', sheet: 'Residence Info - Address 1', kind: 'address', pool: 'text', norm: text },
+  { key: 'raddr', label: 'Resi. Address', sheet: ['Residence Info - Address 1', 'Residence Info - Address 2', 'Residence Info - Address 3'], kind: 'address', pool: 'text', norm: text },
   { key: 'rcity', label: 'Resi. City', sheet: 'Residence Info - City', kind: 'address', pool: 'city', norm: text },
   { key: 'rpin', label: 'Resi. Pincode', sheet: 'Residence Info - Pincode', kind: 'address', pool: 'pincode', norm: pincode },
 ]
+
+// Read a field's sheet value, joining multiple columns (e.g. the 3 address lines)
+// into one when `sheet` is an array.
+const sheetValue = (raw, key) => Array.isArray(key)
+  ? key.map((k) => raw[k]).filter((v) => v != null && String(v).trim() !== '').join(' ')
+  : raw[key]
 
 const NUM_TOL = 1e-4
 
@@ -112,7 +120,7 @@ function compareAddress(field, sheetRaw, addresses, docName) {
 
   // All words across every ERPNext address field — the sheet may combine into
   // one cell what ERPNext splits across title/line1/line2/city.
-  const erpVals = addresses.flatMap((x) => [x.title, x.line1, x.line2, x.line3, x.city, x.county]).filter((v) => !isBlank(text(v)))
+  const erpVals = addresses.flatMap((x) => [x.title, x.line1, x.line2, x.city, x.county]).filter((v) => !isBlank(text(v)))
   const erpWords = new Set(erpVals.flatMap(words))
   const disp = [...new Set(erpVals.map((v) => String(v).trim()))].join(' | ')
   if (erpWords.size === 0) return { status: 'missing_erp', sheet: sheetRaw, erp: '' }
@@ -134,9 +142,10 @@ export function reconcile(sheetRows, erpByCode, { includeAddress = true } = {}) 
     if (erp) {
       const docName = row.raw['Dr. Name'] || erp.firstName || erp.leadName || ''
       for (const f of activeFields) {
+        const sv = sheetValue(row.raw, f.sheet)
         const r = f.kind === 'address'
-          ? compareAddress(f, row.raw[f.sheet], erp.addresses || [], docName)
-          : compareField(f, row.raw[f.sheet], f.erp(erp))
+          ? compareAddress(f, sv, erp.addresses || [], docName)
+          : compareField(f, sv, f.erp(erp))
         fields[f.key] = r
         if (r.status === 'mismatch') mismatch++
         if (r.status === 'missing_erp') missing++

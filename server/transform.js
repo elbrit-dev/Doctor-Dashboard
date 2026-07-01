@@ -104,8 +104,12 @@ function classify(a1, a2, a3, dr) {
 export function buildAddress(r, name, dr) {
   const a = classify(g(r, 'Clinic Info - Address 1'), g(r, 'Clinic Info - Address 2'), g(r, 'Clinic Info - Address 3'), dr)
   if (!a) return null
+  // ERPNext's Address doctype has only address_line1 + address_line2 (no line3).
+  // The sheet carries 3 clinic address lines, so fold lines 2 & 3 into line2 —
+  // otherwise the 3rd line (e.g. "ROAD" of "MAIN ROAD") is silently dropped.
+  const line2 = [a.line2, a.line3].map((s) => String(s || '').trim()).filter(Boolean).join(', ')
   return {
-    address_title: a.title, address_type: a.type, address_line1: a.line1, address_line2: a.line2, address_line3: a.line3,
+    address_title: a.title, address_type: a.type, address_line1: a.line1, address_line2: line2,
     city: g(r, 'Dr. City (Clinic)'), state: canonState(g(r, 'Clinic State'), g(r, 'State')), pincode: g(r, 'Clinic Info - Pincode'),
     country: CFG.COUNTRY, links: [{ link_doctype: 'Lead', link_name: name }],
   }
