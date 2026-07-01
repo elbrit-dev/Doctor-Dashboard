@@ -17,22 +17,18 @@ export default function DuplicatesPanel({ duplicates, onExport }) {
 
   const pending = duplicates.filter((d) => !done.has(d.code))
 
-  const applyResults = (results, acc) => {
-    const nextDone = []
-    for (const r of results) {
-      if (r && r.ok && (!r.errors || r.errors.length === 0)) nextDone.push(r.code)
-    }
+  const applyResults = (results) => {
+    const nextDone = results.filter((r) => r && r.ok).map((r) => r.code)
     if (nextDone.length) setDone((s) => new Set([...s, ...nextDone]))
-    return acc
   }
 
   const mergeAll = async () => {
     if (running || pending.length === 0) return
     if (!window.confirm(
       `Merge ${pending.length} duplicate set(s)?\n\n` +
-      `For each: the padded DR-000… Lead's addresses are merged onto the clean ` +
-      `DR-<code> Lead. Nothing is deleted here — the padded Leads stay and are removed ` +
-      `separately in ERPNext. Re-running is safe.`,
+      `For each: the clean DR-<code> Lead's BLANK fields are backfilled from the padded ` +
+      `DR-000… Lead (existing values are never overwritten). Nothing is deleted — the ` +
+      `padded Leads are removed separately in ERPNext. Fast + re-runnable.`,
     )) return
 
     setError(null); setRunning('all'); setReport(null)
@@ -46,7 +42,7 @@ export default function DuplicatesPanel({ duplicates, onExport }) {
         // eslint-disable-next-line no-await-in-loop
         // Deletes are slow server-side (~15-25s each), so keep batches tiny to
         // stay under the serverless timeout; the loop just makes more calls.
-        const out = await mergeDuplicatesBatch({ duplicates: pending, offset, batchSize: 2 })
+        const out = await mergeDuplicatesBatch({ duplicates: pending, offset, batchSize: 25 })
         for (const k in counts) counts[k] += out.counts?.[k] || 0
         applyResults(out.results || [])
         processed += out.processed || 0
@@ -64,13 +60,13 @@ export default function DuplicatesPanel({ duplicates, onExport }) {
 
   const mergeOne = async (d) => {
     if (running) return
-    if (!window.confirm(`Merge duplicate ${d.code}?\n\nMerge addresses from ${d.remove.join(', ')} onto ${d.keep}. Nothing is deleted — the padded Lead is removed separately in ERPNext.`)) return
+    if (!window.confirm(`Merge duplicate ${d.code}?\n\nBackfill ${d.keep}'s blank fields from ${d.remove.join(', ')} (existing values kept). Nothing is deleted.`)) return
     setError(null); setRunning(d.code)
     try {
       const out = await mergeDuplicatesBatch({ duplicates: [d], batchSize: 1 })
       applyResults(out.results || [])
       const r = (out.results || [])[0]
-      if (r && (!r.ok || r.errors?.length)) setError(`${d.code}: ${r.errors.join('; ')}`)
+      if (r && !r.ok) setError(`${d.code}: ${r.error}`)
     } catch (err) {
       setError(`${d.code}: ${err.message}`)
     } finally {
@@ -111,8 +107,8 @@ export default function DuplicatesPanel({ duplicates, onExport }) {
 
       {c && (
         <p className="card__hint" style={{ padding: '0 8px 8px' }}>
-          Merged <b>{c.movedAddresses}</b> address(es) onto the clean Lead ·
-          removed <b>{c.deletedAddresses}</b> redundant duplicate address(es){c.errors ? <> · <span className="sev-error">{c.errors} error(s)</span></> : ''}.
+          Backfilled <b>{c.merged}</b> clean Lead(s) with <b>{c.fieldsFilled}</b> field(s) ·
+          <b> {c.skipped}</b> already complete{c.errors ? <> · <span className="sev-error">{c.errors} error(s)</span></> : ''}.
           <br />Padded Leads are kept — delete them in ERPNext.
         </p>
       )}

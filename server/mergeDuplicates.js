@@ -1,23 +1,27 @@
-// Merge padded duplicate Leads into their clean form, then delete the padded one.
+// Merge padded duplicate Leads INTO their clean form — data only, no delete.
 //
-// For each duplicate set { code, keep: "DR-<code>", remove: ["DR-000<code>", …] }:
-//   1. Move every address on a `remove` Lead onto `keep` (repoint the Dynamic
-//      Link). If `keep` already has the same address (same line1 + pincode), the
-//      redundant copy is deleted instead — so no duplicate addresses pile up.
-//   2. Delete the `remove` Lead — but ONLY once all its addresses are handled,
-//      so nothing is orphaned.
+// Reality check against UAT: the padded DR-000<code> Leads have NO addresses
+// (verified across all 2.5k of them), so there is nothing to "move". What DOES
+// differ is field data (e.g. the clean DR-<code> often lacks custom_doctor_code
+// while the padded one has it, and vice-versa). So the merge backfills the clean
+// Lead's BLANK fields from the padded one — it never overwrites a value the
+// clean Lead already has, so it is safe.
 //
-// Frappe's built-in rename-with-merge is NOT used: on this instance (40k+ Leads)
-// it hits a lock-wait timeout. These direct, per-record ops stay fast and are
-// safe to continue-on-error. The frontend drives the offset loop.
+// Architecture for speed: per batch we do ONE bulk read (name IN […], chunked to
+// keep the URL short) to pull both records' data, then fast concurrent PUTs
+// (~0.5s each) only on the clean Leads that actually need a backfill. No slow
+// per-record reads, no ~4.5s Lead deletes. Deleting the padded Leads is done
+// separately in ERPNext. All ops retry on transient 5xx.
 
-const addrKey = (a) => `${String(a.address_line1 || '').trim().toLowerCase()}|${String(a.pincode || '').trim()}`
+const strip = (c) => String(c || '').replace(/\D/g, '').replace(/^0+/, '')
+const isBlank = (v) => v == null || String(v).trim() === ''
+
+// Scalar fields backfilled from the padded Lead when the clean one is blank.
+const MERGE_FIELDS = ['custom_specialty', 'custom_qualification', 'custom_category', 'territory', 'state', 'city', 'mobile_no', 'whatsapp_no', 'phone']
+const FETCH_FIELDS = ['name', 'custom_doctor_code', ...MERGE_FIELDS, 'custom_latitude', 'custom_longitude', 'custom_latitude_and_longitude']
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-// UAT returns transient 502 / lock-wait timeouts under write load. Retry any
-// 5xx (or network error) a few times with backoff before giving up; 404 and
-// other 4xx are returned immediately (not transient).
 async function fetchRetry(url, opts, tries = 4) {
   let last
   for (let i = 0; i < tries; i++) {
@@ -44,9 +48,8 @@ async function getJSON(url, headers, label) {
 
 async function send(method, url, headers, body) {
   let r
-  try {
-    r = await fetchRetry(url, { method, headers: { ...headers, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
-  } catch (e) { return { ok: false, status: 0, error: e.message } }
+  try { r = await fetchRetry(url, { method, headers: { ...headers, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }) }
+  catch (e) { return { ok: false, status: 0, error: e.message } }
   if (r.ok) return { ok: true, status: r.status }
   let detail = ''
   try { const j = await r.json(); detail = j.exception || j._server_messages || j.message || '' } catch { detail = r.statusText }
@@ -61,78 +64,61 @@ async function mapLimit(items, limit, fn) {
   await Promise.all(workers)
 }
 
-async function fetchAddressDocs(base, headers, leadName) {
-  const filters = JSON.stringify([['Dynamic Link', 'link_name', '=', leadName], ['Dynamic Link', 'link_doctype', '=', 'Lead']])
-  const url = `${base}/api/resource/Address?filters=${encodeURIComponent(filters)}&fields=${encodeURIComponent('["name","address_line1","pincode"]')}&limit_page_length=0`
-  const j = await getJSON(url, headers, `Address list ${leadName}`)
-  return j.data || []
-}
-
-// Repoint an address's Lead link to `keep` (preserving any non-Lead links).
-async function repointAddress(base, headers, addrName, keep) {
-  const doc = (await getJSON(`${base}/api/resource/Address/${encodeURIComponent(addrName)}`, headers, `Address get ${addrName}`)).data
-  const links = (doc.links || []).map((l) => (l.link_doctype === 'Lead' ? { ...l, link_name: keep } : l))
-  if (!links.some((l) => l.link_doctype === 'Lead' && l.link_name === keep)) links.push({ link_doctype: 'Lead', link_name: keep })
-  return send('PUT', `${base}/api/resource/Address/${encodeURIComponent(addrName)}`, headers, { links })
-}
-
-async function mergeSet(base, headers, set, deleteRemoves) {
-  const keep = set.keep
-  const removes = set.remove || []
-  const res = { code: set.code, keep, removedLeads: [], movedAddresses: 0, deletedAddresses: 0, ok: true, errors: [] }
-
-  const keepKeys = new Set()
-  try { (await fetchAddressDocs(base, headers, keep)).forEach((a) => keepKeys.add(addrKey(a))) }
-  catch (e) { res.errors.push(`keep addresses: ${e.message}`); res.ok = false }
-
-  for (const rem of removes) {
-    try {
-      const remAddrs = await fetchAddressDocs(base, headers, rem)
-      let handled = true
-      for (const a of remAddrs) {
-        const k = addrKey(a)
-        if (keepKeys.has(k)) {
-          const d = await send('DELETE', `${base}/api/resource/Address/${encodeURIComponent(a.name)}`, headers)
-          if (d.ok || d.status === 404) res.deletedAddresses++
-          else { handled = false; res.errors.push(`addr del ${a.name}: ${d.error}`) }
-        } else {
-          const rp = await repointAddress(base, headers, a.name, keep)
-          if (rp.ok) { res.movedAddresses++; keepKeys.add(k) }
-          else { handled = false; res.errors.push(`addr move ${a.name}: ${rp.error}`) }
-        }
-      }
-      if (!handled) { res.ok = false; res.errors.push(`address step failed for ${rem}`); continue }
-      // Deletion is intentionally OPT-IN. By default we MERGE ONLY (move the
-      // padded Lead's addresses onto the clean one) and leave the padded Lead in
-      // place — it is deleted separately in ERPNext (bench script). Pass
-      // deleteRemoves=true to also delete here.
-      if (!deleteRemoves) continue
-      const d = await send('DELETE', `${base}/api/resource/Lead/${encodeURIComponent(rem)}`, headers)
-      if (d.ok || d.status === 404) res.removedLeads.push(rem)
-      else { res.ok = false; res.errors.push(`delete ${rem}: ${d.error}`) }
-    } catch (e) { res.ok = false; res.errors.push(`${rem}: ${e.message}`) }
+// One bulk read of many Leads' data, chunked so the IN(...) URL stays short.
+async function bulkFetchLeads(base, headers, names) {
+  const out = {}
+  const CH = 90
+  const fields = encodeURIComponent(JSON.stringify(FETCH_FIELDS))
+  for (let i = 0; i < names.length; i += CH) {
+    const filters = encodeURIComponent(JSON.stringify([['name', 'in', names.slice(i, i + CH)]]))
+    const j = await getJSON(`${base}/api/resource/Lead?fields=${fields}&filters=${filters}&limit_page_length=0`, headers, 'Lead bulk read')
+    for (const d of (j.data || [])) out[d.name] = d
   }
-  return res
+  return out
 }
 
-// { base, authHeaders, duplicates:[{code,keep,remove[]}], offset, batchSize, concurrency, deleteRemoves }
-// deleteRemoves defaults to false → MERGE ONLY (addresses moved onto the clean
-// Lead; padded Leads left in place for separate deletion in ERPNext).
-export async function runMerge({ base, authHeaders, duplicates, offset = 0, batchSize = 20, concurrency = 2, deleteRemoves = false }) {
+// The backfill patch for one set: clean's blank fields filled from the padded.
+function computeBackfill(set, data) {
+  const keep = data[set.keep]
+  if (!keep) return { error: `clean ${set.keep} not found` }
+  const patch = {}
+  if (isBlank(keep.custom_doctor_code)) patch.custom_doctor_code = strip(set.code)
+  for (const rem of (set.remove || [])) {
+    const rd = data[rem]
+    if (!rd) continue
+    for (const f of MERGE_FIELDS) {
+      if (patch[f] === undefined && isBlank(keep[f]) && !isBlank(rd[f])) patch[f] = rd[f]
+    }
+    const keepGeoMissing = isBlank(keep.custom_latitude) || Number(keep.custom_latitude) === 0
+    if (patch.custom_latitude === undefined && keepGeoMissing && rd.custom_latitude && Number(rd.custom_latitude) !== 0) {
+      patch.custom_latitude = rd.custom_latitude
+      patch.custom_longitude = rd.custom_longitude
+      if (!isBlank(rd.custom_latitude_and_longitude)) patch.custom_latitude_and_longitude = rd.custom_latitude_and_longitude
+    }
+  }
+  return { patch }
+}
+
+// { base, authHeaders, duplicates:[{code,keep,remove[]}], offset, batchSize, concurrency }
+export async function runMerge({ base, authHeaders, duplicates, offset = 0, batchSize = 25, concurrency = 6 }) {
   if (!Array.isArray(duplicates) || duplicates.length === 0) throw new Error('duplicates[] is required')
   const headers = { ...authHeaders, Accept: 'application/json' }
   const batch = duplicates.slice(offset, offset + batchSize)
+
+  const names = [...new Set(batch.flatMap((s) => [s.keep, ...(s.remove || [])]))]
+  const data = await bulkFetchLeads(base, headers, names)
+
+  const counts = { merged: 0, fieldsFilled: 0, skipped: 0, errors: 0 }
   const results = []
-  const counts = { sets: 0, removedLeads: 0, movedAddresses: 0, deletedAddresses: 0, errors: 0 }
 
   await mapLimit(batch, concurrency, async (set) => {
-    const r = await mergeSet(base, headers, set, deleteRemoves)
-    results.push(r)
-    if (r.ok && r.errors.length === 0) counts.sets++
-    counts.removedLeads += r.removedLeads.length
-    counts.movedAddresses += r.movedAddresses
-    counts.deletedAddresses += r.deletedAddresses
-    counts.errors += r.errors.length
+    const { patch, error } = computeBackfill(set, data)
+    if (error) { counts.errors++; results.push({ code: set.code, keep: set.keep, ok: false, error }); return }
+    const keys = Object.keys(patch)
+    if (keys.length === 0) { counts.skipped++; results.push({ code: set.code, keep: set.keep, ok: true, filled: [] }); return }
+    const r = await send('PUT', `${base}/api/resource/Lead/${encodeURIComponent(set.keep)}`, headers, patch)
+    if (r.ok) { counts.merged++; counts.fieldsFilled += keys.length; results.push({ code: set.code, keep: set.keep, ok: true, filled: keys }) }
+    else { counts.errors++; results.push({ code: set.code, keep: set.keep, ok: false, error: r.error, filled: keys }) }
   })
 
   const done = offset + batchSize >= duplicates.length
