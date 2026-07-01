@@ -215,6 +215,8 @@ export default function TriageView({ live }) {
             </div>
           )}
 
+          <DuplicatesPanel duplicates={data.duplicates} onExport={() => exportDupes(data.duplicates)} />
+
           <div className="stack" style={{ gap: 10 }}>
             <div className="section-label" style={{ marginBottom: 0 }}>
               To update — already in UAT ({data.counts.update}) · compared field-by-field below
@@ -225,8 +227,6 @@ export default function TriageView({ live }) {
               <div className="card"><p className="card__hint" style={{ padding: '4px 4px 8px' }}>None to update.</p></div>
             )}
           </div>
-
-          <DuplicatesPanel duplicates={data.duplicates} onExport={() => exportDupes(data.duplicates)} />
         </>
       )}
     </div>
