@@ -27,6 +27,7 @@
 // the offset loop, so no single call risks the serverless timeout.
 
 import { buildLead, buildAddress, strip } from './transform.js'
+import { fetchTerritories, makeTerritoryResolver } from './territory.js'
 
 // ---- normalizers (kept in step with src/lib/reconcile.js) -------------------
 const text = (v) => (v == null ? '' : String(v).trim().replace(/\s+/g, ' ').toLowerCase())
@@ -48,6 +49,10 @@ const SCALAR_FIELDS = [
   { key: 'territory', norm: hqNorm },
   { key: 'state', norm: stateNorm },
   { key: 'city', norm: text },
+  // Backfill the doctor code when a Lead was imported with a DR-<code> name but a
+  // blank custom_doctor_code (matched by ID). Compared as stripped digits, so an
+  // already-correct code is a no-op; a blank one gets filled in.
+  { key: 'custom_doctor_code', norm: (v) => strip(v) },
 ]
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -182,10 +187,12 @@ export async function runUpdate({ base, authHeaders, rows, offset = 0, batchSize
 
   const codes = [...new Set(batch.map((r) => strip(g(r, 'Dr. Code'))).filter(Boolean))]
   const empCodes = [...new Set(batch.map((r) => g(r, 'Emp Code')).filter(Boolean))]
-  const [nameByCode, empMap] = await Promise.all([
+  const [nameByCode, empMap, territories] = await Promise.all([
     resolveLeadNames(base, headers, codes),
     fetchEmployees(base, headers, empCodes),
+    fetchTerritories(base, headers),
   ])
+  const resolveTerritory = makeTerritoryResolver(territories)
 
   const counts = { updated: 0, unchanged: 0, addressAdded: 0, roleAdded: 0, notFound: 0, errors: 0 }
   const results = []
@@ -197,8 +204,12 @@ export async function runUpdate({ base, authHeaders, rows, offset = 0, batchSize
     if (!code) return
     if (!name) { counts.notFound++; results.push({ code, ok: false, error: 'not_in_uat' }); return }
 
-    // Desired bodies from the SAME create builders.
-    const desiredLead = buildLead(r, code, name, dr, '')
+    // Desired bodies from the SAME create builders (HQ resolved to a real Territory).
+    const resolvedTerr = resolveTerritory(g(r, 'HQ'))
+    const desiredLead = buildLead(r, code, name, dr, '', resolvedTerr)
+    // If the HQ can't be confidently matched, leave UAT's territory untouched
+    // rather than trying to write an invalid one (which would just error).
+    if (!resolvedTerr) desiredLead.territory = ''
     const desiredAddr = buildAddress(r, name, dr)
 
     let live, addresses

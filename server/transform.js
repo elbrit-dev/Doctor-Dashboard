@@ -112,14 +112,17 @@ export function buildAddress(r, name, dr) {
 }
 
 // The full create-Lead body, verbatim from the node (custom_address_created is
-// set by the caller once the address is known).
-export function buildLead(r, code, name, dr, rp) {
+// set by the caller once the address is known). `territory` overrides the raw
+// "HQ-<HQ>" when the caller has resolved the HQ to an existing UAT Territory
+// (see server/territory.js) — this avoids the LinkValidationError a wrong/
+// misspelled territory would otherwise trigger.
+export function buildLead(r, code, name, dr, rp, territory) {
   const mob = String(g(r, 'Mobile No.') || '').replace(/\D/g, '')
   const lead = {
     name, salutation: 'Dr', first_name: dr, custom_doctor_code: code,
     custom_specialty: g(r, 'Speciality'), custom_qualification: g(r, 'Qualification'), custom_category: (g(r, 'Category') || undefined),
     mobile_no: (mob || undefined),
-    territory: 'HQ-' + g(r, 'HQ'), state: g(r, 'State'), city: g(r, 'Dr. City (Clinic)'), country: CFG.COUNTRY,
+    territory: territory || ('HQ-' + g(r, 'HQ')), state: g(r, 'State'), city: g(r, 'Dr. City (Clinic)'), country: CFG.COUNTRY,
     status: 'Active', lead_owner: CFG.LEAD_OWNER, company: CFG.COMPANY,
     custom_role_profile: [{ role_profile_list: rp }],
   }
@@ -135,7 +138,7 @@ export function buildLead(r, code, name, dr, rp) {
 //   - code already in UAT       → kind 'skip'  (no action; reported only)
 //   - employee/role missing     → kind 'exception'
 //   - otherwise                 → kind 'create' (carries `lead` + `address`)
-export function transformRow(r, empMap, existing) {
+export function transformRow(r, empMap, existing, resolveTerritory) {
   const code = strip(g(r, 'Dr. Code')); const name = 'DR-' + code; const dr = g(r, 'Dr. Name'); const ec = g(r, 'Emp Code')
   const address = buildAddress(r, name, dr)
 
@@ -147,7 +150,9 @@ export function transformRow(r, empMap, existing) {
   const rp = (e.role_id || e.custom_role_profile || '').trim()
   if (!rp) return { kind: 'exception', code, dr, empcode: ec, empname: g(r, 'Emp Name'), hq: g(r, 'HQ'), reason: 'no_role_profile' }
 
-  const lead = buildLead(r, code, name, dr, rp)
+  // Map the sheet HQ onto an existing Territory (spelling/prefix tolerant).
+  const territory = resolveTerritory ? resolveTerritory(g(r, 'HQ')) : null
+  const lead = buildLead(r, code, name, dr, rp, territory)
   lead.custom_address_created = address ? 1 : 0
   return { kind: 'create', code, name, hasAddress: !!address, lead, address }
 }

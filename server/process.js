@@ -9,6 +9,7 @@
 
 import { transformRow } from './transform.js'
 import { fetchDoctorLeads, leadCode } from './leadIndex.js'
+import { fetchTerritories, makeTerritoryResolver } from './territory.js'
 
 // ---- ERPNext reads ----------------------------------------------------------
 // GET that surfaces the ERPNext error body (Frappe returns the real reason —
@@ -81,12 +82,14 @@ export async function runProcess({ base, authHeaders, rows, offset = 0, batchSiz
   const batch = rows.slice(offset, offset + batchSize)
   const empCodes = [...new Set(batch.map((r) => String(r['Emp Code'] ?? '').trim()).filter(Boolean))]
 
-  const [empMap, existing] = await Promise.all([
+  const [empMap, existing, territories] = await Promise.all([
     fetchEmployees(base, headers, empCodes),
     fetchExistingCodes(base, headers),
+    fetchTerritories(base, headers),
   ])
+  const resolveTerritory = makeTerritoryResolver(territories)
 
-  const transformed = batch.map((r) => transformRow(r, empMap, existing.set))
+  const transformed = batch.map((r) => transformRow(r, empMap, existing.set, resolveTerritory))
 
   const counts = { created: 0, skipped: 0, exceptions: 0, errors: 0 }
   const results = []

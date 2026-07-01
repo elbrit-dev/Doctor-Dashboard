@@ -511,7 +511,11 @@ function UpdateBlock({ rows, selected, setSelected, disabled, running, prog, rep
 
       {errs.length > 0 && (
         <div className="table-wrap" style={{ margin: '0 4px 12px' }}>
-          <div className="section-label">Update errors ({errs.length})</div>
+          <div className="toolbar" style={{ paddingLeft: 0, paddingRight: 0 }}>
+            <div className="section-label" style={{ margin: 0 }}>Update errors ({errs.length})</div>
+            <div className="filterbar__spacer" />
+            <button className="export-btn" onClick={() => exportUpdateErrors(errs)}><IconDownload width={15} height={15} /> Export</button>
+          </div>
           <table className="dt">
             <thead><tr><th>Dr Code</th><th>Lead</th><th>Detail</th></tr></thead>
             <tbody>
@@ -620,7 +624,11 @@ function ActionPanel({ selectedCount, running, runProg, runReport, runError, onR
 
       {runReport && runReport.exceptions.length > 0 && (
         <div className="table-wrap" style={{ marginTop: 12 }}>
-          <div className="section-label">Exceptions — fix &amp; re-run ({runReport.exceptions.length})</div>
+          <div className="toolbar" style={{ paddingLeft: 0, paddingRight: 0 }}>
+            <div className="section-label" style={{ margin: 0 }}>Exceptions — fix &amp; re-run ({runReport.exceptions.length})</div>
+            <div className="filterbar__spacer" />
+            <button className="export-btn" onClick={() => exportExceptions(runReport.exceptions)}><IconDownload width={15} height={15} /> Export</button>
+          </div>
           <table className="dt">
             <thead><tr><th>Dr Code</th><th>Doctor</th><th>Emp Code</th><th>HQ</th><th>Reason</th></tr></thead>
             <tbody>
@@ -638,7 +646,11 @@ function ActionPanel({ selectedCount, running, runProg, runReport, runError, onR
 
       {errs.length > 0 && (
         <div className="table-wrap" style={{ marginTop: 12 }}>
-          <div className="section-label">ERPNext errors ({errs.length})</div>
+          <div className="toolbar" style={{ paddingLeft: 0, paddingRight: 0 }}>
+            <div className="section-label" style={{ margin: 0 }}>ERPNext errors ({errs.length})</div>
+            <div className="filterbar__spacer" />
+            <button className="export-btn" onClick={() => exportCreateErrors(errs)}><IconDownload width={15} height={15} /> Export</button>
+          </div>
           <table className="dt">
             <thead><tr><th>Dr Code</th><th>Operation</th><th>HTTP</th><th>Detail</th></tr></thead>
             <tbody>
@@ -774,3 +786,23 @@ function exportDupes(dupes) {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Duplicates')
   XLSX.writeFile(wb, `duplicate-ids-${new Date().toISOString().slice(0, 10)}.xlsx`)
 }
+
+// Generic error/exception exporter — writes the given plain-object rows to xlsx.
+function exportTable(rows, name) {
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{ Note: 'None' }]), name.slice(0, 31))
+  XLSX.writeFile(wb, `${name}-${new Date().toISOString().slice(0, 10)}.xlsx`)
+}
+
+const exportCreateErrors = (errs) => exportTable(
+  errs.map((r) => ({ 'Dr Code': r.code, Operation: r.op, HTTP: r.status || '', Detail: r.error || '' })),
+  'create-errors',
+)
+const exportExceptions = (exs) => exportTable(
+  exs.map((e) => ({ 'Dr Code': e.code, Doctor: e.dr || '', 'Emp Code': e.empcode || '', HQ: e.hq || '', Reason: e.reason || '' })),
+  'create-exceptions',
+)
+const exportUpdateErrors = (errs) => exportTable(
+  errs.map((r) => ({ 'Dr Code': r.code, Lead: r.name || '', Detail: r.error || '' })),
+  'update-errors',
+)
