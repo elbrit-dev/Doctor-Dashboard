@@ -18,6 +18,7 @@ import { runProcess } from './process.js'
 import { runUpdate } from './updateLeads.js'
 import { runMerge } from './mergeDuplicates.js'
 import { fetchDoctorLeads } from './leadIndex.js'
+import { driveConfigured, driveStatusDetail, listFolderFiles, downloadFile } from './googleDrive.js'
 
 const PORT = process.env.PROXY_PORT || 8787
 const BASE = (process.env.ERPNEXT_URL || '').replace(/\/+$/, '')
@@ -209,6 +210,35 @@ app.post('/api/merge-duplicates', async (req, res) => {
   } catch (err) {
     console.error('[proxy] merge failed:', err.message)
     res.status(502).json({ error: 'ERPNext request failed', detail: err.message })
+  }
+})
+
+// ── Google Drive (server-side; no per-user login) ───────────────────────────
+// List the shared folder's sheets. Returns { configured, files }.
+app.get('/api/drive/files', async (req, res) => {
+  if (!driveConfigured()) {
+    return res.status(200).json({ configured: false, detail: driveStatusDetail(), files: [] })
+  }
+  try {
+    const files = await listFolderFiles()
+    res.json({ configured: true, files })
+  } catch (err) {
+    console.error('[proxy] drive list failed:', err.message)
+    res.status(502).json({ configured: true, error: 'Google Drive list failed', detail: err.message })
+  }
+})
+
+// Download one folder file (bytes streamed back so the browser gets a real file).
+app.get('/api/drive/file/:id', async (req, res) => {
+  if (!driveConfigured()) return res.status(503).json({ error: 'Google Drive not configured', detail: driveStatusDetail() })
+  try {
+    const { buffer, filename, contentType } = await downloadFile(req.params.id)
+    res.setHeader('Content-Type', contentType)
+    res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/"/g, '')}"`)
+    res.send(buffer)
+  } catch (err) {
+    console.error('[proxy] drive download failed:', err.message)
+    res.status(502).json({ error: 'Google Drive download failed', detail: err.message })
   }
 })
 

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { parseSheet } from '../lib/parseSheet.js'
 import { reconcileSheet, processBatch, updateBatch } from '../data/source.js'
-import { folderConfigured, getDriveToken, listFolderFiles, downloadFromDrive } from '../lib/googleDrive.js'
+import { listFolderFiles, downloadFromDrive } from '../lib/googleDrive.js'
 import { IconDownload } from './icons.jsx'
 import ReconcileView from './ReconcileView.jsx'
 import DuplicatesPanel from './DuplicatesPanel.jsx'
@@ -51,8 +51,8 @@ export default function TriageView({ live }) {
   const [updError, setUpdError] = useState(null)
   const [mergedCount, setMergedCount] = useState(0) // duplicate sets merged (reported up by DuplicatesPanel)
 
-  // Google Drive folder browser (inline file list; no picker button).
-  const [driveState, setDriveState] = useState('idle') // idle | loading | need-auth | ready | error
+  // Google Drive folder browser (inline file list; server-side, no login).
+  const [driveState, setDriveState] = useState('idle') // idle | loading | ready | not-configured | error
   const [driveFiles, setDriveFiles] = useState(null)
   const [driveError, setDriveError] = useState(null)
   const [loadingFileId, setLoadingFileId] = useState(null)
@@ -84,28 +84,27 @@ export default function TriageView({ live }) {
     dropJSON(STORE_DATA); dropJSON(STORE_UI) // completed marks (STORE_DONE) are kept on purpose
   }
 
-  // List the sheets in the shared Drive folder inline. Silent first (uses an
-  // existing consent); if that needs interaction, show a one-time Connect button.
-  const loadDriveList = async ({ interactive }) => {
+  // List the sheets in the shared Drive folder — the server reads the folder, so
+  // there is no login/popup here. Fetched automatically on load.
+  const loadDriveList = async () => {
     setDriveState('loading'); setDriveError(null)
     try {
-      const token = await getDriveToken({ interactive })
-      const files = await listFolderFiles(token)
+      const { configured, files, detail } = await listFolderFiles()
+      if (!configured) { setDriveError(detail || 'Drive folder not configured on the server.'); setDriveState('not-configured'); return }
       setDriveFiles(files); setDriveState('ready')
     } catch (err) {
-      if (!interactive) { setDriveState('need-auth'); return } // consent required
       setDriveError(err.message); setDriveState('error')
     }
   }
 
-  // Open one folder file: download it, then run the same parse + triage path.
+  // Open one folder file: download it (via the server), then run the same parse
+  // + triage path used by a local upload.
   const openDriveFile = async (f) => {
     if (phase === 'working' || loadingFileId) return
     setLoadingFileId(f.id)
     setError(null)
     try {
-      const token = await getDriveToken({ interactive: true })
-      const file = await downloadFromDrive(f, token)
+      const file = await downloadFromDrive(f)
       setActiveFileId(f.id)
       await processFile(file)
     } catch (err) {
@@ -115,9 +114,9 @@ export default function TriageView({ live }) {
     }
   }
 
-  // Try to list the folder as soon as the live connection is up.
+  // List the folder as soon as the live connection is up (no user action needed).
   useEffect(() => {
-    if (live && folderConfigured() && driveState === 'idle') loadDriveList({ interactive: false })
+    if (live && driveState === 'idle') loadDriveList()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live])
 
@@ -296,25 +295,17 @@ export default function TriageView({ live }) {
         {error && <p className="reviewbox__msg err" style={{ marginTop: 10 }}>Error: {error}</p>}
       </div>
 
-      {folderConfigured() ? (
-        <DriveBrowser
-          state={driveState}
-          files={driveFiles}
-          error={driveError}
-          completed={completed}
-          activeFileId={activeFileId}
-          loadingFileId={loadingFileId}
-          busy={phase === 'working' || running || updRunning}
-          onConnect={() => loadDriveList({ interactive: true })}
-          onRefresh={() => loadDriveList({ interactive: true })}
-          onOpen={openDriveFile}
-        />
-      ) : (
-        <div className="card"><p className="card__hint" style={{ padding: '8px' }}>
-          Google Drive folder not configured — set <code>VITE_GOOGLE_API_KEY</code>, <code>VITE_GOOGLE_CLIENT_ID</code>
-          and <code>VITE_GOOGLE_DRIVE_FOLDER_ID</code> in the deploy environment, then rebuild.
-        </p></div>
-      )}
+      <DriveBrowser
+        state={driveState}
+        files={driveFiles}
+        error={driveError}
+        completed={completed}
+        activeFileId={activeFileId}
+        loadingFileId={loadingFileId}
+        busy={phase === 'working' || running || updRunning}
+        onRefresh={loadDriveList}
+        onOpen={openDriveFile}
+      />
 
       {data && (
         <>
@@ -669,9 +660,10 @@ function Kpi({ n, label, tone }) {
   )
 }
 
-// Inline listing of the shared Drive folder's sheets. Click a row to load that
-// sheet; a finished sheet shows a ✓ Completed tick.
-function DriveBrowser({ state, files, error, completed, activeFileId, loadingFileId, busy, onConnect, onRefresh, onOpen }) {
+// Inline listing of the shared Drive folder's sheets — served by the backend, so
+// no login is needed. Click a row to load that sheet; a finished sheet shows a
+// ✓ Completed tick.
+function DriveBrowser({ state, files, error, completed, activeFileId, loadingFileId, busy, onRefresh, onOpen }) {
   return (
     <div className="card">
       <div className="toolbar">
@@ -686,16 +678,15 @@ function DriveBrowser({ state, files, error, completed, activeFileId, loadingFil
         <p className="card__hint" style={{ padding: '4px 8px 10px' }}>Loading files…</p>
       ) : null}
 
-      {state === 'need-auth' && (
-        <div style={{ padding: '4px 8px 12px' }}>
-          <p className="card__hint" style={{ marginTop: 0 }}>Connect your Google account to list the sheets in the shared folder.</p>
-          <button className="btn btn--ready" onClick={onConnect}>Connect Google Drive</button>
-        </div>
+      {state === 'not-configured' && (
+        <p className="card__hint" style={{ padding: '4px 8px 12px' }}>
+          Google Drive isn't set up on the server yet. {error}
+        </p>
       )}
 
       {state === 'error' && (
         <p className="reviewbox__msg err" style={{ margin: '0 8px 10px' }}>
-          Error: {error} <button className="export-btn" style={{ marginLeft: 8 }} onClick={onConnect}>Retry</button>
+          Error: {error} <button className="export-btn" style={{ marginLeft: 8 }} onClick={onRefresh}>Retry</button>
         </p>
       )}
 

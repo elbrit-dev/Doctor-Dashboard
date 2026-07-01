@@ -48,6 +48,18 @@
   to = "/.netlify/functions/merge-duplicates"
   status = 200
 
+# Google Drive: list the shared folder's sheets (server-side, no user login).
+[[redirects]]
+  from = "/api/drive/files"
+  to = "/.netlify/functions/drive-files"
+  status = 200
+
+# Google Drive: download one folder file's bytes (id is the trailing path segment).
+[[redirects]]
+  from = "/api/drive/file/:id"
+  to = "/.netlify/functions/drive-file/:id"
+  status = 200
+
 # SPA fallback — every other route serves the built index.html.
 [[redirects]]
   from = "/*"

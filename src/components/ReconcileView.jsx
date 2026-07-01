@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { parseSheet, cleanCodes } from '../lib/parseSheet.js'
-import { pickFromDrive } from '../lib/googleDrive.js'
 import { fetchLeadsByCode, submitReview } from '../data/source.js'
 import { reconcile, FIELDS } from '../lib/reconcile.js'
 import { IconDownload, IconSearch } from './icons.jsx'
@@ -95,21 +94,6 @@ export default function ReconcileView({ live, rows: externalRows = null, embedde
     if (rows) runRows(rows)
   }
 
-  // Pick a sheet from the locked Google Drive folder, then validate it.
-  const onDrive = async () => {
-    if (phase === 'working') return
-    setError(null)
-    try {
-      const file = await pickFromDrive()
-      if (!file) return
-      setFileName(file.name)
-      const { rows } = await parseSheet(file)
-      runRows(rows)
-    } catch (err) {
-      setError(err.message); setPhase('error')
-    }
-  }
-
   // Embedded mode: compare the rows handed in (e.g. the "update" subset), and
   // re-run when those rows or the address toggle change.
   useEffect(() => {
@@ -175,9 +159,6 @@ export default function ReconcileView({ live, rows: externalRows = null, embedde
             <>
               <button className="export-btn" onClick={() => fileRef.current?.click()} disabled={phase === 'working'}>
                 {phase === 'working' ? 'Checking…' : 'Upload sheet'}
-              </button>
-              <button className="export-btn" onClick={onDrive} disabled={phase === 'working'} title="Pick a sheet from Google Drive">
-                Choose from Google Drive
               </button>
               <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={onFile} />
             </>
