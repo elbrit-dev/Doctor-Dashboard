@@ -53,10 +53,11 @@ const SCALAR_FIELDS = [
   { key: 'territory', norm: hqNorm },
   { key: 'state', norm: stateNorm },
   { key: 'city', norm: text },
-  // Backfill the doctor code when a Lead was imported with a DR-<code> name but a
-  // blank custom_doctor_code (matched by ID). Compared as stripped digits, so an
-  // already-correct code is a no-op; a blank one gets filled in.
-  { key: 'custom_doctor_code', norm: (v) => strip(v) },
+  // Normalize the doctor code to the zero-stripped form (matching the DR-<code>
+  // ID). The DESIRED value is already stripped (buildLead uses strip), and we
+  // compare the RAW stored value — so a blank code gets filled AND a zero-padded
+  // one like "00004444" is rewritten to "4444". An already-clean code is a no-op.
+  { key: 'custom_doctor_code', norm: (v) => String(v ?? '').trim() },
 ]
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
