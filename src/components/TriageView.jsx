@@ -49,6 +49,7 @@ export default function TriageView({ live }) {
   const [updProg, setUpdProg] = useState(null) // { processed, total }
   const [updReport, setUpdReport] = useState(null) // { counts, results }
   const [updError, setUpdError] = useState(null)
+  const [mergedCount, setMergedCount] = useState(0) // duplicate sets merged (reported up by DuplicatesPanel)
 
   // Save heavy payload only when the sheet/result changes (i.e. on upload/clear).
   useEffect(() => {
@@ -67,7 +68,7 @@ export default function TriageView({ live }) {
   const clearAll = () => {
     setData(null); setParsedRows(null); setFileName(''); setPhase('idle'); setError(null)
     setSelected(new Set()); setUpdateSelected(new Set()); setRunReport(null); setShowValidate(false); setRunProg(null); setRunError(null)
-    setUpdReport(null); setUpdProg(null); setUpdError(null); setShowFullValidate(false)
+    setUpdReport(null); setUpdProg(null); setUpdError(null); setShowFullValidate(false); setMergedCount(0)
     setStoreWarn(false)
     dropJSON(STORE_DATA); dropJSON(STORE_UI)
   }
@@ -121,7 +122,7 @@ export default function TriageView({ live }) {
   const processFile = async (file) => {
     setFileName(file.name); setError(null); setPhase('working'); setData(null); setParsedRows(null)
     setRunReport(null); setRunError(null); setRunProg(null); setSelected(new Set()); setUpdateSelected(new Set())
-    setShowValidate(false); setShowFullValidate(false); setUpdReport(null); setUpdProg(null); setUpdError(null); setStoreWarn(false)
+    setShowValidate(false); setShowFullValidate(false); setUpdReport(null); setUpdProg(null); setUpdError(null); setMergedCount(0); setStoreWarn(false)
     try {
       const { rows } = await parseSheet(file)
       const out = await reconcileSheet(rows.map((r) => r.raw))
@@ -206,6 +207,22 @@ export default function TriageView({ live }) {
     return parsedRows.filter((r) => created.has(nc(r.code)))
   }, [parsedRows, runReport])
 
+  // Live KPI counts: start from the triage totals and subtract what's been
+  // handled so far — created/skipped shrink "to create", updated/unchanged shrink
+  // "to update", merged sets shrink "duplicate IDs".
+  const remaining = useMemo(() => {
+    const base = data?.counts || { create: 0, update: 0, duplicates: 0 }
+    const rc = runReport?.counts
+    const uc = updReport?.counts
+    const createDone = rc ? (rc.created || 0) + (rc.skipped || 0) : 0
+    const updateDone = uc ? (uc.updated || 0) + (uc.unchanged || 0) : 0
+    return {
+      create: Math.max(0, base.create - createDone),
+      update: Math.max(0, base.update - updateDone),
+      duplicates: Math.max(0, base.duplicates - mergedCount),
+    }
+  }, [data, runReport, updReport, mergedCount])
+
   if (!live) {
     return (
       <div className="card" style={{ padding: 24 }}>
@@ -251,9 +268,9 @@ export default function TriageView({ live }) {
         <>
           <div className="rc-kpis">
             <Kpi n={data.counts.sheetRows} label="Rows in sheet" />
-            <Kpi n={data.counts.create} label="To create (new)" tone="ok" />
-            <Kpi n={data.counts.update} label="To update (exists)" tone="warning" />
-            <Kpi n={data.counts.duplicates} label="Duplicate IDs" tone="error" />
+            <Kpi n={remaining.create} label="To create (new)" tone="ok" />
+            <Kpi n={remaining.update} label="To update (exists)" tone="warning" />
+            <Kpi n={remaining.duplicates} label="Duplicate IDs" tone="error" />
           </div>
 
           <CreateBlock
@@ -285,7 +302,7 @@ export default function TriageView({ live }) {
             </div>
           )}
 
-          <DuplicatesPanel duplicates={data.duplicates} onExport={() => exportDupes(data.duplicates)} />
+          <DuplicatesPanel duplicates={data.duplicates} onExport={() => exportDupes(data.duplicates)} onMergedChange={setMergedCount} />
 
           <UpdateBlock
             rows={data.update}

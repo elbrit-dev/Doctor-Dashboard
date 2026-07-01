@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { mergeDuplicatesBatch } from '../data/source.js'
 import { IconDownload } from './icons.jsx'
 
@@ -8,7 +8,7 @@ const DUP_PAGE = 20 // same paginated 20/page layout as the "To update" table
 // Merge each padded Lead's addresses onto the clean one, then delete the padded
 // Lead. Bulk "Merge & delete" drives the batched /api/merge-duplicates loop; a
 // per-row button does a single set. Re-running is safe (already-gone = skipped).
-export default function DuplicatesPanel({ duplicates, onExport }) {
+export default function DuplicatesPanel({ duplicates, onExport, onMergedChange }) {
   const [running, setRunning] = useState(null) // null | 'all' | '<code>'
   const [prog, setProg] = useState(null) // { processed, total }
   const [report, setReport] = useState(null) // { counts }
@@ -17,6 +17,9 @@ export default function DuplicatesPanel({ duplicates, onExport }) {
   const [page, setPage] = useState(0)
 
   const pending = duplicates.filter((d) => !done.has(d.code))
+
+  // Report merged-set count up so the parent's "Duplicate IDs" KPI can shrink.
+  useEffect(() => { onMergedChange?.(done.size) }, [done]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const applyResults = (results) => {
     const nextDone = results.filter((r) => r && r.ok).map((r) => r.code)
