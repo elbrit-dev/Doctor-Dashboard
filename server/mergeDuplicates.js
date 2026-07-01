@@ -76,7 +76,7 @@ async function repointAddress(base, headers, addrName, keep) {
   return send('PUT', `${base}/api/resource/Address/${encodeURIComponent(addrName)}`, headers, { links })
 }
 
-async function mergeSet(base, headers, set) {
+async function mergeSet(base, headers, set, deleteRemoves) {
   const keep = set.keep
   const removes = set.remove || []
   const res = { code: set.code, keep, removedLeads: [], movedAddresses: 0, deletedAddresses: 0, ok: true, errors: [] }
@@ -101,8 +101,12 @@ async function mergeSet(base, headers, set) {
           else { handled = false; res.errors.push(`addr move ${a.name}: ${rp.error}`) }
         }
       }
-      if (!handled) { res.ok = false; res.errors.push(`kept ${rem} — address step failed, not deleted`); continue }
-      // Delete the padded Lead (fetchRetry handles transient lock-wait 5xx).
+      if (!handled) { res.ok = false; res.errors.push(`address step failed for ${rem}`); continue }
+      // Deletion is intentionally OPT-IN. By default we MERGE ONLY (move the
+      // padded Lead's addresses onto the clean one) and leave the padded Lead in
+      // place — it is deleted separately in ERPNext (bench script). Pass
+      // deleteRemoves=true to also delete here.
+      if (!deleteRemoves) continue
       const d = await send('DELETE', `${base}/api/resource/Lead/${encodeURIComponent(rem)}`, headers)
       if (d.ok || d.status === 404) res.removedLeads.push(rem)
       else { res.ok = false; res.errors.push(`delete ${rem}: ${d.error}`) }
@@ -111,8 +115,10 @@ async function mergeSet(base, headers, set) {
   return res
 }
 
-// { base, authHeaders, duplicates:[{code,keep,remove[]}], offset, batchSize, concurrency }
-export async function runMerge({ base, authHeaders, duplicates, offset = 0, batchSize = 20, concurrency = 2 }) {
+// { base, authHeaders, duplicates:[{code,keep,remove[]}], offset, batchSize, concurrency, deleteRemoves }
+// deleteRemoves defaults to false → MERGE ONLY (addresses moved onto the clean
+// Lead; padded Leads left in place for separate deletion in ERPNext).
+export async function runMerge({ base, authHeaders, duplicates, offset = 0, batchSize = 20, concurrency = 2, deleteRemoves = false }) {
   if (!Array.isArray(duplicates) || duplicates.length === 0) throw new Error('duplicates[] is required')
   const headers = { ...authHeaders, Accept: 'application/json' }
   const batch = duplicates.slice(offset, offset + batchSize)
@@ -120,7 +126,7 @@ export async function runMerge({ base, authHeaders, duplicates, offset = 0, batc
   const counts = { sets: 0, removedLeads: 0, movedAddresses: 0, deletedAddresses: 0, errors: 0 }
 
   await mapLimit(batch, concurrency, async (set) => {
-    const r = await mergeSet(base, headers, set)
+    const r = await mergeSet(base, headers, set, deleteRemoves)
     results.push(r)
     if (r.ok && r.errors.length === 0) counts.sets++
     counts.removedLeads += r.removedLeads.length

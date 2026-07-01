@@ -21,6 +21,9 @@ const DRY = !!arg('--dry', false)
 const LIMIT = Number(arg('--limit', 0)) || 0
 const CONCURRENCY = Number(arg('--concurrency', 3)) || 3
 const BATCH = Number(arg('--batch', 50)) || 50
+// Default is MERGE ONLY (move addresses onto the clean Lead, no delete). Pass
+// --delete to also delete the padded Leads (otherwise delete them in ERPNext).
+const DELETE = !!arg('--delete', false)
 
 const BASE = (process.env.ERPNEXT_URL || '').replace(/\/+$/, '')
 const authHeaders = { Authorization: `token ${process.env.ERPNEXT_API_KEY || ''}:${process.env.ERPNEXT_API_SECRET || ''}` }
@@ -52,19 +55,20 @@ const { totalLeads, mergeable, noClean } = await discover()
 let dups = mergeable
 if (LIMIT > 0) dups = dups.slice(0, LIMIT)
 console.log(`DR- leads: ${totalLeads} | mergeable duplicate sets: ${mergeable.length} | no-clean-form (skipped): ${noClean}`)
-console.log(`processing: ${dups.length}${LIMIT ? ` (--limit ${LIMIT})` : ''} | concurrency ${CONCURRENCY} | batch ${BATCH}${DRY ? ' | DRY RUN (no writes)' : ''}`)
+console.log(`processing: ${dups.length}${LIMIT ? ` (--limit ${LIMIT})` : ''} | concurrency ${CONCURRENCY} | batch ${BATCH} | mode ${DELETE ? 'MERGE+DELETE' : 'MERGE ONLY (no delete)'}${DRY ? ' | DRY RUN (no writes)' : ''}`)
 if (DRY || dups.length === 0) { console.log('done (dry).'); process.exit(0) }
 
 const counts = { sets: 0, removedLeads: 0, movedAddresses: 0, deletedAddresses: 0, errors: 0 }
 let offset = 0
 while (offset < dups.length) {
-  const out = await runMerge({ base: BASE, authHeaders, duplicates: dups, offset, batchSize: BATCH, concurrency: CONCURRENCY })
+  const out = await runMerge({ base: BASE, authHeaders, duplicates: dups, offset, batchSize: BATCH, concurrency: CONCURRENCY, deleteRemoves: DELETE })
   for (const k in counts) counts[k] += out.counts?.[k] || 0
   for (const rr of out.results) if (rr.errors?.length) console.log(`  ! ${rr.code}: ${rr.errors.join('; ')}`)
+  const prev = offset
   offset = out.nextOffset == null ? dups.length : out.nextOffset
   const el = (Date.now() - t0) / 1000
-  const rate = counts.removedLeads / el
+  const rate = offset / el // sets/sec
   const eta = rate > 0 ? Math.round((dups.length - offset) / rate) : 0
-  console.log(`  ${Math.min(offset, dups.length)}/${dups.length} | removed ${counts.removedLeads} | movedAddr ${counts.movedAddresses} | errors ${counts.errors} | ${el.toFixed(0)}s${offset < dups.length ? ` | ~${eta}s left` : ''}`)
+  console.log(`  ${Math.min(offset, dups.length)}/${dups.length} sets | movedAddr ${counts.movedAddresses} | removed ${counts.removedLeads} | errors ${counts.errors} | ${el.toFixed(0)}s${offset < dups.length ? ` | ~${eta}s left` : ''}`)
 }
 console.log(`DONE in ${((Date.now() - t0) / 1000).toFixed(0)}s →`, JSON.stringify(counts))

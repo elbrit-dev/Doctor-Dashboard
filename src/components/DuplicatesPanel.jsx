@@ -29,10 +29,10 @@ export default function DuplicatesPanel({ duplicates, onExport }) {
   const mergeAll = async () => {
     if (running || pending.length === 0) return
     if (!window.confirm(
-      `Merge & delete ${pending.length} duplicate set(s)?\n\n` +
-      `For each: the padded DR-000… Lead's addresses are moved onto the clean ` +
-      `DR-<code> Lead, then the padded Lead is DELETED in ERPNext. This is live and ` +
-      `not easily undone. Re-running is safe (already-merged sets are skipped).`,
+      `Merge ${pending.length} duplicate set(s)?\n\n` +
+      `For each: the padded DR-000… Lead's addresses are merged onto the clean ` +
+      `DR-<code> Lead. Nothing is deleted here — the padded Leads stay and are removed ` +
+      `separately in ERPNext. Re-running is safe.`,
     )) return
 
     setError(null); setRunning('all'); setReport(null)
@@ -64,7 +64,7 @@ export default function DuplicatesPanel({ duplicates, onExport }) {
 
   const mergeOne = async (d) => {
     if (running) return
-    if (!window.confirm(`Merge & delete duplicate ${d.code}?\n\nMove addresses onto ${d.keep}, then delete ${d.remove.join(', ')} in ERPNext.`)) return
+    if (!window.confirm(`Merge duplicate ${d.code}?\n\nMerge addresses from ${d.remove.join(', ')} onto ${d.keep}. Nothing is deleted — the padded Lead is removed separately in ERPNext.`)) return
     setError(null); setRunning(d.code)
     try {
       const out = await mergeDuplicatesBatch({ duplicates: [d], batchSize: 1 })
@@ -91,8 +91,8 @@ export default function DuplicatesPanel({ duplicates, onExport }) {
         {duplicates.length > 0 && (
           <>
             <button className="export-btn" onClick={onExport}><IconDownload width={15} height={15} /> Export duplicates</button>
-            <button className="btn btn--error" onClick={mergeAll} disabled={running != null || pending.length === 0}>
-              {running === 'all' ? 'Merging…' : `Merge & delete 0-series (${pending.length})`}
+            <button className="btn btn--ready" onClick={mergeAll} disabled={running != null || pending.length === 0}>
+              {running === 'all' ? 'Merging…' : `Merge 0-series → clean (${pending.length})`}
             </button>
           </>
         )}
@@ -111,8 +111,9 @@ export default function DuplicatesPanel({ duplicates, onExport }) {
 
       {c && (
         <p className="card__hint" style={{ padding: '0 8px 8px' }}>
-          Deleted <b>{c.removedLeads}</b> padded Lead(s) · moved <b>{c.movedAddresses}</b> address(es) ·
-          removed <b>{c.deletedAddresses}</b> redundant address(es){c.errors ? <> · <span className="sev-error">{c.errors} error(s)</span></> : ''}.
+          Merged <b>{c.movedAddresses}</b> address(es) onto the clean Lead ·
+          removed <b>{c.deletedAddresses}</b> redundant duplicate address(es){c.errors ? <> · <span className="sev-error">{c.errors} error(s)</span></> : ''}.
+          <br />Padded Leads are kept — delete them in ERPNext.
         </p>
       )}
       {error && <p className="reviewbox__msg err" style={{ margin: '0 8px 8px' }}>Error: {error}</p>}
@@ -134,19 +135,19 @@ export default function DuplicatesPanel({ duplicates, onExport }) {
                   <span className="review-chip ready">✓ merged</span>
                 ) : (
                   <button
-                    className="btn btn--error"
+                    className="btn btn--ready"
                     style={{ padding: '2px 10px', fontSize: 12 }}
                     disabled={running != null || d.kind !== 'has_clean_form'}
-                    title={d.kind !== 'has_clean_form' ? 'No clean DR-<code> form to keep — resolve manually' : `Move addresses to ${d.keep} and delete ${d.remove.join(', ')}`}
+                    title={d.kind !== 'has_clean_form' ? 'No clean DR-<code> form to keep — resolve manually' : `Merge addresses from ${d.remove.join(', ')} onto ${d.keep} (no delete)`}
                     onClick={() => mergeOne(d)}
                   >
-                    {running === d.code ? '…' : 'Merge & delete'}
+                    {running === d.code ? '…' : 'Merge'}
                   </button>
                 )}
               </div>
             )
           })}
-          {duplicates.length > CAP && <p className="card__hint">Showing first {CAP} of {duplicates.length}. "Merge &amp; delete 0-series" processes every set.</p>}
+          {duplicates.length > CAP && <p className="card__hint">Showing first {CAP} of {duplicates.length}. "Merge 0-series → clean" processes every set.</p>}
         </div>
       )}
     </div>
