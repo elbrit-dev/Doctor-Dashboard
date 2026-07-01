@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { loadDoctors } from './data/source.js'
 import { IconShield } from './components/icons.jsx'
-import ManualCheckView from './components/ManualCheckView.jsx'
+import ReconcileView from './components/ReconcileView.jsx'
 import TriageView from './components/TriageView.jsx'
 
 export default function App() {
@@ -34,7 +34,7 @@ export default function App() {
         </div>
       </header>
 
-      {mode === 'check' ? <ManualCheckView live={live} /> : <TriageView live={live} />}
+      {mode === 'check' ? <ReconcileView live={live} /> : <TriageView live={live} />}
     </div>
   )
 }

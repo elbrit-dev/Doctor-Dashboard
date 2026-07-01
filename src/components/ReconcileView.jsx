@@ -143,7 +143,7 @@ export default function ReconcileView({ live, rows: externalRows = null, embedde
       <div className="card" style={{ padding: embedded ? 12 : 18 }}>
         <div className="rc-upload">
           <div>
-            <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>{embedded ? 'Field comparison — update rows (already in UAT)' : 'Bulk reconciliation'}</h3>
+            <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>{embedded ? 'Field comparison — update rows (already in UAT)' : 'Validation check — sheet vs UAT'}</h3>
             <p className="card__hint" style={{ margin: 0 }}>
               {embedded
                 ? <>Each existing doctor is compared field by field against the sheet. Formatting differences (HQ prefix, state case, leading zeros, phone) are normalized.</>
