@@ -16,9 +16,11 @@ const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
 // it (not their whole Drive). Take the id from the folder URL:
 //   https://drive.google.com/drive/folders/<THIS_IS_THE_FOLDER_ID>
 const FOLDER_ID = import.meta.env.VITE_GOOGLE_DRIVE_FOLDER_ID
-// drive.file: the app only ever sees files the user explicitly picks — the
-// narrowest scope that still lets the Picker hand us the chosen file.
-const SCOPE = 'https://www.googleapis.com/auth/drive.file'
+// drive.readonly: needed so the Picker can LIST an existing folder's contents.
+// (drive.file only exposes files the app itself created/previously picked, so a
+// setParent() folder view shows up EMPTY. We only ever read the one sheet the
+// user selects.)
+const SCOPE = 'https://www.googleapis.com/auth/drive.readonly'
 
 const SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
