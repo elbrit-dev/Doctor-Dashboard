@@ -55,11 +55,21 @@ export async function fetchLeadsByCode(codes, { addresses = true, onProgress } =
 
 // Create/update/duplicate triage: send the parsed sheet rows, get back which
 // codes need creating, which exist (update), and the duplicate sets.
+// Only 4 fields are needed to categorize a row (see server/triage.js). Big
+// sheets (7k+ rows × 40 columns) would blow past the serverless request-body
+// limit (~6 MB → HTTP 500), so we send just those fields. The full rows stay in
+// the browser for the batched create/update calls.
 export async function reconcileSheet(rows) {
+  const slim = rows.map((r) => ({
+    'Dr. Code': r['Dr. Code'],
+    'Dr. Name': r['Dr. Name'],
+    'Emp Code': r['Emp Code'],
+    HQ: r['HQ'],
+  }))
   const res = await fetch('/api/reconcile', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ rows }),
+    body: JSON.stringify({ rows: slim }),
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`)

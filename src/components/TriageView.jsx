@@ -58,6 +58,9 @@ export default function TriageView({ live }) {
   const [loadingFileId, setLoadingFileId] = useState(null)
   const [completed, setCompleted] = useState(() => new Set(readJSON(STORE_DONE) || [])) // Drive file ids finished
   const [activeFileId, setActiveFileId] = useState(bootUI?.activeFileId || null)
+  // Collapse the (long) folder list once a sheet is loaded, to keep the focus on
+  // the create/update work. Starts collapsed if a sheet was already open.
+  const [driveCollapsed, setDriveCollapsed] = useState(!!bootUI?.activeFileId)
 
   // Save heavy payload only when the sheet/result changes (i.e. on upload/clear).
   useEffect(() => {
@@ -107,6 +110,7 @@ export default function TriageView({ live }) {
       const file = await downloadFromDrive(f)
       setActiveFileId(f.id)
       await processFile(file)
+      setDriveCollapsed(true) // minimize the list once the sheet is loaded
     } catch (err) {
       setError(err.message); setPhase(data ? 'done' : 'error')
     } finally {
@@ -303,6 +307,8 @@ export default function TriageView({ live }) {
         activeFileId={activeFileId}
         loadingFileId={loadingFileId}
         busy={phase === 'working' || running || updRunning}
+        collapsed={driveCollapsed}
+        onToggle={() => setDriveCollapsed((v) => !v)}
         onRefresh={loadDriveList}
         onOpen={openDriveFile}
       />
@@ -663,34 +669,54 @@ function Kpi({ n, label, tone }) {
 // Inline listing of the shared Drive folder's sheets — served by the backend, so
 // no login is needed. Click a row to load that sheet; a finished sheet shows a
 // ✓ Completed tick.
-function DriveBrowser({ state, files, error, completed, activeFileId, loadingFileId, busy, onRefresh, onOpen }) {
+function DriveBrowser({ state, files, error, completed, activeFileId, loadingFileId, busy, collapsed, onToggle, onRefresh, onOpen }) {
+  const doneCount = state === 'ready' && files ? files.filter((f) => completed.has(f.id)).length : 0
+  const canCollapse = state === 'ready' && files && files.length > 0
   return (
     <div className="card">
       <div className="toolbar">
-        <span className="section-label" style={{ margin: 0 }}>
-          Doctor sheets — Google Drive{state === 'ready' && files ? ` (${files.length})` : ''}
-        </span>
+        <button
+          type="button"
+          onClick={canCollapse ? onToggle : undefined}
+          disabled={!canCollapse}
+          title={collapsed ? 'Show all sheets' : 'Hide the sheet list'}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', padding: 0, cursor: canCollapse ? 'pointer' : 'default', font: 'inherit' }}
+        >
+          {canCollapse && (
+            <span style={{ transition: 'transform .15s ease', transform: collapsed ? 'rotate(180deg)' : 'none', fontSize: 12, color: 'var(--muted, #64748b)' }}>▲</span>
+          )}
+          <span className="section-label" style={{ margin: 0 }}>
+            Doctor sheets — Google Drive{state === 'ready' && files ? ` (${files.length})` : ''}
+            {collapsed && doneCount > 0 ? ` · ${doneCount} completed` : ''}
+          </span>
+        </button>
         <div className="filterbar__spacer" />
         {state === 'ready' && <button className="export-btn" onClick={onRefresh} disabled={busy}>Refresh</button>}
       </div>
 
-      {state === 'idle' || state === 'loading' ? (
+      {collapsed && canCollapse && (
+        <p className="card__hint" style={{ padding: '4px 8px 10px', margin: 0 }}>
+          List hidden — click the title to choose another sheet.
+        </p>
+      )}
+
+      {!collapsed && (state === 'idle' || state === 'loading') ? (
         <p className="card__hint" style={{ padding: '4px 8px 10px' }}>Loading files…</p>
       ) : null}
 
-      {state === 'not-configured' && (
+      {!collapsed && state === 'not-configured' && (
         <p className="card__hint" style={{ padding: '4px 8px 12px' }}>
           Google Drive isn't set up on the server yet. {error}
         </p>
       )}
 
-      {state === 'error' && (
+      {!collapsed && state === 'error' && (
         <p className="reviewbox__msg err" style={{ margin: '0 8px 10px' }}>
           Error: {error} <button className="export-btn" style={{ marginLeft: 8 }} onClick={onRefresh}>Retry</button>
         </p>
       )}
 
-      {state === 'ready' && (
+      {!collapsed && state === 'ready' && (
         files.length === 0 ? (
           <p className="card__hint" style={{ padding: '4px 8px 10px' }}>
             No sheets in the folder — or it isn't shared with this Google account.
