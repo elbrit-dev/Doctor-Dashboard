@@ -25,8 +25,10 @@ const SCOPE = 'https://www.googleapis.com/auth/drive.readonly'
 const SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 const PICK_MIMES = `${SHEET_MIME},${XLSX_MIME},application/vnd.ms-excel,text/csv`
+const ACCEPTED = new Set([SHEET_MIME, XLSX_MIME, 'application/vnd.ms-excel', 'text/csv'])
 
 export const driveConfigured = () => !!(API_KEY && CLIENT_ID)
+export const folderConfigured = () => driveConfigured() && !!FOLDER_ID
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -123,3 +125,53 @@ export async function pickFromDrive() {
   if (!doc) return null
   return downloadAsFile(doc, token)
 }
+
+// ── Inline folder listing (no Picker UI) ─────────────────────────────────────
+// Get an OAuth access token, cached until ~1 min before expiry. interactive
+// false → silent attempt (rejects if the user hasn't consented yet); the caller
+// then shows a one-time "Connect" gesture and calls again with interactive:true.
+let cachedToken = null
+let tokenExpiry = 0
+export function getDriveToken({ interactive = true } = {}) {
+  // eslint-disable-next-line no-async-promise-executor
+  return new Promise(async (resolve, reject) => {
+    try {
+      if (!driveConfigured()) throw new Error('Google Drive is not configured (set VITE_GOOGLE_API_KEY and VITE_GOOGLE_CLIENT_ID, then rebuild).')
+      if (cachedToken && Date.now() < tokenExpiry - 60000) return resolve(cachedToken)
+      await ensureGis()
+      const client = window.google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID,
+        scope: SCOPE,
+        callback: (resp) => {
+          if (resp.error) return reject(new Error(resp.error_description || resp.error))
+          cachedToken = resp.access_token
+          tokenExpiry = Date.now() + Number(resp.expires_in || 3600) * 1000
+          resolve(cachedToken)
+        },
+        error_callback: (err) => reject(new Error(err?.message || 'Google authorization failed')),
+      })
+      client.requestAccessToken({ prompt: interactive ? '' : 'none' })
+    } catch (e) { reject(e) }
+  })
+}
+
+// List the accepted sheet files (Google Sheets / .xlsx / .xls / .csv) directly
+// inside the configured folder. Works for a My Drive folder or a Shared Drive.
+export async function listFolderFiles(token) {
+  if (!FOLDER_ID) throw new Error('No Drive folder configured (set VITE_GOOGLE_DRIVE_FOLDER_ID).')
+  const params = new URLSearchParams({
+    q: `'${FOLDER_ID}' in parents and trashed = false`,
+    fields: 'files(id,name,mimeType,modifiedTime,size)',
+    orderBy: 'name',
+    pageSize: '200',
+    supportsAllDrives: 'true',
+    includeItemsFromAllDrives: 'true',
+  })
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files?${params}`, { headers: { Authorization: `Bearer ${token}` } })
+  if (!res.ok) throw new Error(`Google Drive list failed: HTTP ${res.status}`)
+  const json = await res.json()
+  return (json.files || []).filter((f) => ACCEPTED.has(f.mimeType) || /\.(xlsx|xls|csv)$/i.test(f.name || ''))
+}
+
+// Download one listed file (by {id,name,mimeType}) as a browser File.
+export const downloadFromDrive = (doc, token) => downloadAsFile(doc, token)

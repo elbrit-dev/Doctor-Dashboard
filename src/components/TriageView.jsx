@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { parseSheet } from '../lib/parseSheet.js'
 import { reconcileSheet, processBatch, updateBatch } from '../data/source.js'
-import { pickFromDrive } from '../lib/googleDrive.js'
+import { folderConfigured, getDriveToken, listFolderFiles, downloadFromDrive } from '../lib/googleDrive.js'
 import { IconDownload } from './icons.jsx'
 import ReconcileView from './ReconcileView.jsx'
 import DuplicatesPanel from './DuplicatesPanel.jsx'
@@ -17,12 +17,12 @@ const CAP = 300 // max rows rendered per block; full data is in the export
 // the whole sheet.
 const STORE_DATA = 'dvd-triage-data-v1'
 const STORE_UI = 'dvd-triage-ui-v1'
+const STORE_DONE = 'dvd-drive-done-v1' // Drive file ids marked completed (survives Clear)
 const readJSON = (k) => { try { const s = localStorage.getItem(k); return s ? JSON.parse(s) : null } catch { return null } }
 const writeJSON = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true } catch { return false } }
 const dropJSON = (k) => { try { localStorage.removeItem(k) } catch { /* ignore */ } }
 
 export default function TriageView({ live }) {
-  const fileRef = useRef(null)
   // Rehydrate once from localStorage (lazy initializers run a single time).
   const [bootData] = useState(() => readJSON(STORE_DATA)) // { fileName, data, parsedRows }
   const [bootUI] = useState(() => readJSON(STORE_UI))     // { selected, runReport, showValidate }
@@ -51,6 +51,14 @@ export default function TriageView({ live }) {
   const [updError, setUpdError] = useState(null)
   const [mergedCount, setMergedCount] = useState(0) // duplicate sets merged (reported up by DuplicatesPanel)
 
+  // Google Drive folder browser (inline file list; no picker button).
+  const [driveState, setDriveState] = useState('idle') // idle | loading | need-auth | ready | error
+  const [driveFiles, setDriveFiles] = useState(null)
+  const [driveError, setDriveError] = useState(null)
+  const [loadingFileId, setLoadingFileId] = useState(null)
+  const [completed, setCompleted] = useState(() => new Set(readJSON(STORE_DONE) || [])) // Drive file ids finished
+  const [activeFileId, setActiveFileId] = useState(bootUI?.activeFileId || null)
+
   // Save heavy payload only when the sheet/result changes (i.e. on upload/clear).
   useEffect(() => {
     if (data && parsedRows) {
@@ -62,16 +70,56 @@ export default function TriageView({ live }) {
 
   // Save light UI state (selection, run report, validate toggle) on every change.
   useEffect(() => {
-    writeJSON(STORE_UI, { selected: [...selected], updateSelected: [...updateSelected], runReport, showValidate })
-  }, [selected, updateSelected, runReport, showValidate])
+    writeJSON(STORE_UI, { selected: [...selected], updateSelected: [...updateSelected], runReport, showValidate, activeFileId })
+  }, [selected, updateSelected, runReport, showValidate, activeFileId])
+
+  // Completed-file marks persist on their own key (survive Clear / new uploads).
+  useEffect(() => { writeJSON(STORE_DONE, [...completed]) }, [completed])
 
   const clearAll = () => {
     setData(null); setParsedRows(null); setFileName(''); setPhase('idle'); setError(null)
     setSelected(new Set()); setUpdateSelected(new Set()); setRunReport(null); setShowValidate(false); setRunProg(null); setRunError(null)
-    setUpdReport(null); setUpdProg(null); setUpdError(null); setShowFullValidate(false); setMergedCount(0)
+    setUpdReport(null); setUpdProg(null); setUpdError(null); setShowFullValidate(false); setMergedCount(0); setActiveFileId(null)
     setStoreWarn(false)
-    dropJSON(STORE_DATA); dropJSON(STORE_UI)
+    dropJSON(STORE_DATA); dropJSON(STORE_UI) // completed marks (STORE_DONE) are kept on purpose
   }
+
+  // List the sheets in the shared Drive folder inline. Silent first (uses an
+  // existing consent); if that needs interaction, show a one-time Connect button.
+  const loadDriveList = async ({ interactive }) => {
+    setDriveState('loading'); setDriveError(null)
+    try {
+      const token = await getDriveToken({ interactive })
+      const files = await listFolderFiles(token)
+      setDriveFiles(files); setDriveState('ready')
+    } catch (err) {
+      if (!interactive) { setDriveState('need-auth'); return } // consent required
+      setDriveError(err.message); setDriveState('error')
+    }
+  }
+
+  // Open one folder file: download it, then run the same parse + triage path.
+  const openDriveFile = async (f) => {
+    if (phase === 'working' || loadingFileId) return
+    setLoadingFileId(f.id)
+    setError(null)
+    try {
+      const token = await getDriveToken({ interactive: true })
+      const file = await downloadFromDrive(f, token)
+      setActiveFileId(f.id)
+      await processFile(file)
+    } catch (err) {
+      setError(err.message); setPhase(data ? 'done' : 'error')
+    } finally {
+      setLoadingFileId(null)
+    }
+  }
+
+  // Try to list the folder as soon as the live connection is up.
+  useEffect(() => {
+    if (live && folderConfigured() && driveState === 'idle') loadDriveList({ interactive: false })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live])
 
   // Loop /api/update batch-by-batch (stateless server; we own the offset) for the
   // selected "already in UAT" codes: scalar backfill on change, append the
@@ -132,25 +180,6 @@ export default function TriageView({ live }) {
       setUpdateSelected(new Set(out.update.map((u) => u.code)))
     } catch (err) {
       setError(err.message); setPhase('error')
-    }
-  }
-
-  const onFile = async (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    e.target.value = '' // allow re-picking the same file later
-    processFile(file)
-  }
-
-  // Open the Google Drive picker; on selection, run the same parse+triage path.
-  const onDrive = async () => {
-    if (phase === 'working') return
-    setError(null)
-    try {
-      const file = await pickFromDrive()
-      if (file) processFile(file)
-    } catch (err) {
-      setError(err.message); setPhase(data ? 'done' : 'error')
     }
   }
 
@@ -223,6 +252,15 @@ export default function TriageView({ live }) {
     }
   }, [data, runReport, updReport, mergedCount])
 
+  // A Drive file is "completed" once its create/update/duplicate work is all
+  // done (nothing left to process) — mark it so the folder list shows a tick.
+  useEffect(() => {
+    if (!activeFileId || !data) return
+    if (remaining.create === 0 && remaining.update === 0 && remaining.duplicates === 0) {
+      setCompleted((prev) => (prev.has(activeFileId) ? prev : new Set([...prev, activeFileId])))
+    }
+  }, [activeFileId, data, remaining])
+
   if (!live) {
     return (
       <div className="card" style={{ padding: 24 }}>
@@ -241,28 +279,42 @@ export default function TriageView({ live }) {
           <div>
             <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>Create vs Update</h3>
             <p className="card__hint" style={{ margin: 0 }}>
-              Upload a division sheet. Each row is matched by <b>Dr. Code</b> against UAT: codes not in UAT are
-              <b> to create</b>, codes already in UAT are <b>to update</b>. Duplicate IDs (same code stored as more
-              than one Lead, e.g. <code>DR-4444</code> + <code>DR-00004444</code>) are listed separately.
+              Pick a division sheet from the shared Google Drive folder below. Each row is matched by <b>Dr. Code</b>
+              against UAT: codes not in UAT are <b>to create</b>, codes already in UAT are <b>to update</b>. Duplicate
+              IDs (same code stored as more than one Lead, e.g. <code>DR-4444</code> + <code>DR-00004444</code>) are
+              listed separately. A sheet is marked <b>✓ Completed</b> once its create / update / duplicate work is done.
             </p>
           </div>
-          <button className="export-btn" onClick={() => fileRef.current?.click()} disabled={phase === 'working'}>
-            {phase === 'working' ? 'Checking…' : 'Upload sheet'}
-          </button>
-          <button className="export-btn" onClick={onDrive} disabled={phase === 'working'} title="Pick a sheet from Google Drive">
-            Choose from Google Drive
-          </button>
           {data && (
-            <button className="export-btn" onClick={clearAll} disabled={running || phase === 'working'} title="Clear the saved sheet and result">
+            <button className="export-btn" onClick={clearAll} disabled={running || updRunning || phase === 'working'} title="Unload the current sheet">
               Clear
             </button>
           )}
-          <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={onFile} />
         </div>
         {fileName && <p className="rc-filename">{fileName}{phase === 'working' ? ' · matching against UAT…' : (data ? ' · saved — survives refresh' : '')}</p>}
         {storeWarn && <p className="card__hint" style={{ marginTop: 8 }}>⚠️ This sheet is too large to save in the browser, so a refresh will need a re-upload.</p>}
         {error && <p className="reviewbox__msg err" style={{ marginTop: 10 }}>Error: {error}</p>}
       </div>
+
+      {folderConfigured() ? (
+        <DriveBrowser
+          state={driveState}
+          files={driveFiles}
+          error={driveError}
+          completed={completed}
+          activeFileId={activeFileId}
+          loadingFileId={loadingFileId}
+          busy={phase === 'working' || running || updRunning}
+          onConnect={() => loadDriveList({ interactive: true })}
+          onRefresh={() => loadDriveList({ interactive: true })}
+          onOpen={openDriveFile}
+        />
+      ) : (
+        <div className="card"><p className="card__hint" style={{ padding: '8px' }}>
+          Google Drive folder not configured — set <code>VITE_GOOGLE_API_KEY</code>, <code>VITE_GOOGLE_CLIENT_ID</code>
+          and <code>VITE_GOOGLE_DRIVE_FOLDER_ID</code> in the deploy environment, then rebuild.
+        </p></div>
+      )}
 
       {data && (
         <>
@@ -613,6 +665,82 @@ function Kpi({ n, label, tone }) {
     <div className="card kpi" style={{ padding: 14 }}>
       <div className={`kpi__value ${tone || ''}`} style={{ fontSize: 26 }}>{n}</div>
       <div className="kpi__label">{label}</div>
+    </div>
+  )
+}
+
+// Inline listing of the shared Drive folder's sheets. Click a row to load that
+// sheet; a finished sheet shows a ✓ Completed tick.
+function DriveBrowser({ state, files, error, completed, activeFileId, loadingFileId, busy, onConnect, onRefresh, onOpen }) {
+  return (
+    <div className="card">
+      <div className="toolbar">
+        <span className="section-label" style={{ margin: 0 }}>
+          Doctor sheets — Google Drive{state === 'ready' && files ? ` (${files.length})` : ''}
+        </span>
+        <div className="filterbar__spacer" />
+        {state === 'ready' && <button className="export-btn" onClick={onRefresh} disabled={busy}>Refresh</button>}
+      </div>
+
+      {state === 'idle' || state === 'loading' ? (
+        <p className="card__hint" style={{ padding: '4px 8px 10px' }}>Loading files…</p>
+      ) : null}
+
+      {state === 'need-auth' && (
+        <div style={{ padding: '4px 8px 12px' }}>
+          <p className="card__hint" style={{ marginTop: 0 }}>Connect your Google account to list the sheets in the shared folder.</p>
+          <button className="btn btn--ready" onClick={onConnect}>Connect Google Drive</button>
+        </div>
+      )}
+
+      {state === 'error' && (
+        <p className="reviewbox__msg err" style={{ margin: '0 8px 10px' }}>
+          Error: {error} <button className="export-btn" style={{ marginLeft: 8 }} onClick={onConnect}>Retry</button>
+        </p>
+      )}
+
+      {state === 'ready' && (
+        files.length === 0 ? (
+          <p className="card__hint" style={{ padding: '4px 8px 10px' }}>
+            No sheets in the folder — or it isn't shared with this Google account.
+          </p>
+        ) : (
+          <div className="table-wrap">
+            <table className="dt">
+              <thead>
+                <tr><th>Sheet</th><th style={{ width: 120 }}>Modified</th><th style={{ width: 140 }}>Status</th><th style={{ width: 110 }}></th></tr>
+              </thead>
+              <tbody>
+                {files.map((f) => {
+                  const done = completed.has(f.id)
+                  const active = activeFileId === f.id
+                  return (
+                    <tr key={f.id} className={active ? 'is-selected' : ''}>
+                      <td>{f.name}</td>
+                      <td>{(f.modifiedTime || '').slice(0, 10)}</td>
+                      <td>
+                        {done ? <span className="review-chip ready">✓ Completed</span>
+                          : active ? <span className="review-chip">Loaded</span>
+                            : <span className="card__hint">—</span>}
+                      </td>
+                      <td>
+                        <button
+                          className="btn btn--ready"
+                          style={{ padding: '2px 10px', fontSize: 12 }}
+                          disabled={busy || loadingFileId === f.id}
+                          onClick={() => onOpen(f)}
+                        >
+                          {loadingFileId === f.id ? 'Loading…' : (done || active) ? 'Re-open' : 'Open'}
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
     </div>
   )
 }
