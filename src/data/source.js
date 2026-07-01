@@ -80,6 +80,19 @@ export async function processBatch({ rows, offset = 0, batchSize = 50 }) {
   return body
 }
 
+// Merge padded duplicate Leads into their clean form (moving addresses) and
+// delete the padded ones. Stateless per call — caller drives the offset loop.
+export async function mergeDuplicatesBatch({ duplicates, offset = 0, batchSize = 20 }) {
+  const res = await fetch('/api/merge-duplicates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ duplicates, offset, batchSize }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`)
+  return body
+}
+
 // CRM writes a review decision back to ERPNext (posts a comment on the Lead).
 // payload: { id, decision: 'ready'|'error', issues?: string[], note?: string, by?: string }
 export async function submitReview(payload) {

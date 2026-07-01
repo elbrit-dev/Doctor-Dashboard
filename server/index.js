@@ -15,6 +15,7 @@ import { DOCTOR_IDS } from './doctorIds.js'
 import { mapLead } from './mapLead.js'
 import { triage } from './triage.js'
 import { runProcess } from './process.js'
+import { runMerge } from './mergeDuplicates.js'
 import { fetchDoctorLeads } from './leadIndex.js'
 
 const PORT = process.env.PROXY_PORT || 8787
@@ -169,6 +170,21 @@ app.post('/api/process', async (req, res) => {
     res.json({ source: `ERPNext · ${BASE}`, action: 'create', ...out })
   } catch (err) {
     console.error('[proxy] process failed:', err.message)
+    res.status(502).json({ error: 'ERPNext request failed', detail: err.message })
+  }
+})
+
+// Merge padded duplicate Leads into their clean form (+move addresses) and
+// delete the padded ones. POST { duplicates, offset?, batchSize? }.
+app.post('/api/merge-duplicates', async (req, res) => {
+  if (!configured()) return res.status(503).json({ error: 'ERPNext not configured' })
+  const { duplicates, offset, batchSize } = req.body || {}
+  if (!Array.isArray(duplicates) || duplicates.length === 0) return res.status(400).json({ error: 'duplicates[] is required' })
+  try {
+    const out = await runMerge({ base: BASE, authHeaders, duplicates, offset: Number(offset) || 0, batchSize: Number(batchSize) || 20 })
+    res.json({ source: `ERPNext · ${BASE}`, ...out })
+  } catch (err) {
+    console.error('[proxy] merge failed:', err.message)
     res.status(502).json({ error: 'ERPNext request failed', detail: err.message })
   }
 })

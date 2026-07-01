@@ -4,6 +4,7 @@ import { parseSheet } from '../lib/parseSheet.js'
 import { reconcileSheet, processBatch } from '../data/source.js'
 import { IconDownload } from './icons.jsx'
 import ReconcileView from './ReconcileView.jsx'
+import DuplicatesPanel from './DuplicatesPanel.jsx'
 
 const nc = (c) => String(c ?? '').replace(/\D/g, '').replace(/^0+/, '')
 
@@ -225,32 +226,7 @@ export default function TriageView({ live }) {
             )}
           </div>
 
-          <div className="card">
-            <div className="toolbar">
-              <span className="section-label" style={{ margin: 0 }}>Duplicate IDs in UAT ({data.duplicates.length})</span>
-              <div className="filterbar__spacer" />
-              {data.duplicates.length > 0 && (
-                <button className="export-btn" onClick={() => exportDupes(data.duplicates)}>
-                  <IconDownload width={15} height={15} /> Export duplicates
-                </button>
-              )}
-            </div>
-            {data.duplicates.length === 0 ? (
-              <p className="card__hint" style={{ padding: '4px 4px 8px' }}>No duplicate IDs among this sheet's codes. ✅</p>
-            ) : (
-              <div className="dup-list">
-                {data.duplicates.slice(0, CAP).map((d) => (
-                  <div className="dup-item" key={d.code}>
-                    <span className="code">{d.code}</span>
-                    <span className="dup-keep">keep <b>{d.keep}</b></span>
-                    <span className="dup-remove">remove {d.remove.map((n) => <code key={n}>{n}</code>)}</span>
-                    <span className={`review-chip ${d.kind === 'has_clean_form' ? 'ready' : 'error'}`}>{d.kind === 'has_clean_form' ? 'padded duplicate' : 'no clean form'}</span>
-                  </div>
-                ))}
-                {data.duplicates.length > CAP && <p className="card__hint">Showing first {CAP} of {data.duplicates.length} — export for the full list.</p>}
-              </div>
-            )}
-          </div>
+          <DuplicatesPanel duplicates={data.duplicates} onExport={() => exportDupes(data.duplicates)} />
         </>
       )}
     </div>
