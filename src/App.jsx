@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { loadDoctors } from './data/source.js'
 import { IconShield } from './components/icons.jsx'
-import ReconcileView from './components/ReconcileView.jsx'
 import TriageView from './components/TriageView.jsx'
 
 export default function App() {
@@ -12,7 +11,6 @@ export default function App() {
     loadDoctors().then((f) => setConn({ mode: f.mode, fetchedAt: f.fetchedAt })).catch(() => setConn({ mode: 'snapshot' }))
   }, [])
 
-  const [mode, setMode] = useState('check') // check | triage
   const live = conn.mode === 'live'
 
   return (
@@ -26,15 +24,11 @@ export default function App() {
           </div>
         </div>
         <div className="header__meta">
-          <div className="segmented mode-tabs">
-            <button className={mode === 'check' ? 'active' : ''} onClick={() => setMode('check')}>Validation check</button>
-            <button className={mode === 'triage' ? 'active' : ''} onClick={() => setMode('triage')}>Create / Update</button>
-          </div>
           <ModeBadge mode={conn.mode} fetchedAt={conn.fetchedAt} />
         </div>
       </header>
 
-      {mode === 'check' ? <ReconcileView live={live} /> : <TriageView live={live} />}
+      <TriageView live={live} />
     </div>
   )
 }
