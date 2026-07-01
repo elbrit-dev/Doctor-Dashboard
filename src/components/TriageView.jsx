@@ -38,6 +38,7 @@ export default function TriageView({ live }) {
   const [runReport, setRunReport] = useState(bootUI?.runReport || null) // { counts, results, exceptions }
   const [runError, setRunError] = useState(null)
   const [selected, setSelected] = useState(() => new Set(bootUI?.selected || [])) // normalized codes chosen to create
+  const [updateSelected, setUpdateSelected] = useState(() => new Set(bootUI?.updateSelected || [])) // codes chosen to update
   const [showValidate, setShowValidate] = useState(bootUI?.showValidate || false)
   const [storeWarn, setStoreWarn] = useState(false)
 
@@ -52,27 +53,34 @@ export default function TriageView({ live }) {
 
   // Save light UI state (selection, run report, validate toggle) on every change.
   useEffect(() => {
-    writeJSON(STORE_UI, { selected: [...selected], runReport, showValidate })
-  }, [selected, runReport, showValidate])
+    writeJSON(STORE_UI, { selected: [...selected], updateSelected: [...updateSelected], runReport, showValidate })
+  }, [selected, updateSelected, runReport, showValidate])
 
   const clearAll = () => {
     setData(null); setParsedRows(null); setFileName(''); setPhase('idle'); setError(null)
-    setSelected(new Set()); setRunReport(null); setShowValidate(false); setRunProg(null); setRunError(null)
+    setSelected(new Set()); setUpdateSelected(new Set()); setRunReport(null); setShowValidate(false); setRunProg(null); setRunError(null)
     setStoreWarn(false)
     dropJSON(STORE_DATA); dropJSON(STORE_UI)
+  }
+
+  // Update action — the write logic will be supplied later; for now the button
+  // just surfaces the selected count so the flow/UX is in place.
+  const runUpdate = (codes) => {
+    window.alert(`Update ${codes.length} selected doctor(s) in UAT — update logic pending (to be provided).`)
   }
 
   const onFile = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
     setFileName(file.name); setError(null); setPhase('working'); setData(null); setParsedRows(null)
-    setRunReport(null); setRunError(null); setRunProg(null); setSelected(new Set()); setShowValidate(false); setStoreWarn(false)
+    setRunReport(null); setRunError(null); setRunProg(null); setSelected(new Set()); setUpdateSelected(new Set()); setShowValidate(false); setStoreWarn(false)
     try {
       const { rows } = await parseSheet(file)
       const out = await reconcileSheet(rows.map((r) => r.raw))
-      // Pre-select every "to create" code so the default action is "create all".
+      // Pre-select every "to create" / "to update" code so the default is "all".
       setParsedRows(rows); setData(out); setPhase('done')
       setSelected(new Set(out.create.map((c) => c.code)))
+      setUpdateSelected(new Set(out.update.map((u) => u.code)))
     } catch (err) {
       setError(err.message); setPhase('error')
     }
@@ -217,6 +225,14 @@ export default function TriageView({ live }) {
 
           <DuplicatesPanel duplicates={data.duplicates} onExport={() => exportDupes(data.duplicates)} />
 
+          <UpdateBlock
+            rows={data.update}
+            selected={updateSelected}
+            setSelected={setUpdateSelected}
+            disabled={running}
+            onUpdate={runUpdate}
+          />
+
           <div className="stack" style={{ gap: 10 }}>
             <div className="section-label" style={{ marginBottom: 0 }}>
               To update — already in UAT ({data.counts.update}) · compared field-by-field below
@@ -285,6 +301,71 @@ function CreateBlock({ rows, selected, setSelected, disabled, onExport }) {
             </p>
           )}
         </div>
+      )}
+    </div>
+  )
+}
+
+// "To update" table — the codes already in UAT. Same layout as CreateBlock but
+// PAGINATED (20 per page, for the ~thousands of update rows) with a select-all
+// (covers every code across pages) and an Update button (write logic supplied
+// later). The field-by-field comparison below is a separate, untouched section.
+const UPDATE_PAGE = 20
+function UpdateBlock({ rows, selected, setSelected, disabled, onUpdate }) {
+  const [page, setPage] = useState(0)
+  const allCodes = rows.map((r) => r.code)
+  const allOn = allCodes.length > 0 && allCodes.every((c) => selected.has(c))
+  const toggleAll = () => setSelected(() => (allOn ? new Set() : new Set(allCodes)))
+  const toggle = (code) => setSelected((prev) => { const n = new Set(prev); n.has(code) ? n.delete(code) : n.add(code); return n })
+  const pages = Math.max(1, Math.ceil(rows.length / UPDATE_PAGE))
+  const p = Math.min(page, pages - 1)
+  const pageRows = rows.slice(p * UPDATE_PAGE, p * UPDATE_PAGE + UPDATE_PAGE)
+  return (
+    <div className="card">
+      <div className="toolbar">
+        <span className="section-label" style={{ margin: 0 }}>
+          To update — already in UAT ({rows.length}) · <b>{selected.size} selected</b>
+        </span>
+        <div className="filterbar__spacer" />
+        <button className="btn btn--ready" disabled={disabled || selected.size === 0} onClick={() => onUpdate([...selected])}>
+          Update selected · {selected.size}
+        </button>
+      </div>
+      {rows.length === 0 ? (
+        <p className="card__hint" style={{ padding: '4px 4px 8px' }}>None already in UAT.</p>
+      ) : (
+        <>
+          <div className="table-wrap">
+            <table className="dt">
+              <thead>
+                <tr>
+                  <th style={{ width: 36 }}>
+                    <input type="checkbox" checked={allOn} disabled={disabled} onChange={toggleAll} title="Select all" />
+                  </th>
+                  <th>Dr Code</th><th>Doctor</th><th>Emp Code</th><th>HQ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pageRows.map((r, i) => (
+                  <tr key={r.code + i} className={selected.has(r.code) ? 'is-selected' : ''}>
+                    <td><input type="checkbox" checked={selected.has(r.code)} disabled={disabled} onChange={() => toggle(r.code)} /></td>
+                    <td className="code">{r.code}</td>
+                    <td>{r.name || '—'}</td>
+                    <td>{r.empCode || '—'}</td>
+                    <td>{r.hq || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {pages > 1 && (
+            <div className="rc-pager">
+              <button disabled={p === 0} onClick={() => setPage(p - 1)}>← Prev</button>
+              <span>Page {p + 1} of {pages} · {rows.length} rows · {UPDATE_PAGE}/page</span>
+              <button disabled={p >= pages - 1} onClick={() => setPage(p + 1)}>Next →</button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )
