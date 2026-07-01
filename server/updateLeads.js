@@ -39,6 +39,11 @@ const phoneNorm = (v) => { const d = String(v ?? '').replace(/\D/g, ''); return 
 const isBlank = (v) => v == null || String(v).trim() === ''
 const NUM_TOL = 1e-4
 
+// Full-address identity key: line1 + line2 + city + pincode (normalized). Two
+// addresses are "the same" only when ALL of these match; any difference makes
+// the sheet address a new, separate address.
+const addrKey = (a) => [a.address_line1, a.address_line2, a.city, a.pincode].map((v) => text(v)).join('|')
+
 // Scalar fields synced on update: desired-Lead key → live-Lead key + normalizer.
 // (Operational fields — status, lead_owner, company, salutation — are left alone.)
 const SCALAR_FIELDS = [
@@ -159,7 +164,7 @@ async function fetchAddresses(base, headers, name) {
     ['Dynamic Link', 'link_doctype', '=', 'Lead'],
   ]))
   try {
-    const j = await getJSON(`${base}/api/resource/Address?filters=${filters}&fields=${encodeURIComponent('["address_line1","city"]')}&limit_page_length=50`, headers, 'Address fetch')
+    const j = await getJSON(`${base}/api/resource/Address?filters=${filters}&fields=${encodeURIComponent('["address_line1","address_line2","city","pincode"]')}&limit_page_length=50`, headers, 'Address fetch')
     return j.data || []
   } catch { return [] }
 }
@@ -241,11 +246,14 @@ export async function runUpdate({ base, authHeaders, rows, offset = 0, batchSize
       roleAdded = true
     }
 
-    // (1) address — append if the sheet's (line1, city) matches none in UAT.
+    // (1) address — append a new one only if ALL address lines (line1, line2,
+    // city, pincode) match none of the Lead's existing addresses. Any difference
+    // → treated as a different address and added as a second block (append-only;
+    // existing addresses are never edited).
     let needAddress = false
     if (desiredAddr) {
-      const key = `${text(desiredAddr.address_line1)}|${text(desiredAddr.city)}`
-      const match = addresses.some((a) => `${text(a.address_line1)}|${text(a.city)}` === key)
+      const key = addrKey(desiredAddr)
+      const match = addresses.some((a) => addrKey(a) === key)
       needAddress = !match
     }
 
