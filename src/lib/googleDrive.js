@@ -12,6 +12,10 @@
 
 const API_KEY = import.meta.env.VITE_GOOGLE_API_KEY
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
+// Optional: lock the picker to ONE Drive folder so users only see the sheets in
+// it (not their whole Drive). Take the id from the folder URL:
+//   https://drive.google.com/drive/folders/<THIS_IS_THE_FOLDER_ID>
+const FOLDER_ID = import.meta.env.VITE_GOOGLE_DRIVE_FOLDER_ID
 // drive.file: the app only ever sees files the user explicitly picks — the
 // narrowest scope that still lets the Picker hand us the chosen file.
 const SCOPE = 'https://www.googleapis.com/auth/drive.file'
@@ -62,22 +66,33 @@ function showPicker(token) {
   return new Promise((resolve, reject) => {
     try {
       const gp = window.google.picker
+      // Base view: the sheet file types we accept.
       const view = new gp.DocsView(gp.ViewId.DOCS)
         .setMimeTypes(PICK_MIMES)
         .setIncludeFolders(true)
         .setSelectFolderEnabled(false)
-      const picker = new gp.PickerBuilder()
+
+      const builder = new gp.PickerBuilder()
         .setOAuthToken(token)
         .setDeveloperKey(API_KEY)
-        .addView(view)
-        .addView(new gp.DocsView(gp.ViewId.SPREADSHEETS))
         .setTitle('Select a doctor sheet')
         .setCallback((data) => {
           if (data.action === gp.Action.PICKED) resolve(data.docs[0])
           else if (data.action === gp.Action.CANCEL) resolve(null)
         })
-        .build()
-      picker.setVisible(true)
+
+      if (FOLDER_ID) {
+        // Restrict to ONE folder: root the view there and hide the left-hand
+        // navigation so users can't browse the rest of Drive. Only the files
+        // (and any sub-folders) inside that folder are shown.
+        view.setParent(FOLDER_ID)
+        builder.addView(view).enableFeature(gp.Feature.NAV_HIDDEN)
+      } else {
+        // Unrestricted: the accepted-types view + an all-spreadsheets view.
+        builder.addView(view).addView(new gp.DocsView(gp.ViewId.SPREADSHEETS))
+      }
+
+      builder.build().setVisible(true)
     } catch (e) { reject(e) }
   })
 }
