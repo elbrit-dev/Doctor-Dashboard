@@ -44,7 +44,9 @@ export default function DuplicatesPanel({ duplicates, onExport }) {
       // eslint-disable-next-line no-constant-condition
       while (true) {
         // eslint-disable-next-line no-await-in-loop
-        const out = await mergeDuplicatesBatch({ duplicates: pending, offset, batchSize: 20 })
+        // Deletes are slow server-side (~15-25s each), so keep batches tiny to
+        // stay under the serverless timeout; the loop just makes more calls.
+        const out = await mergeDuplicatesBatch({ duplicates: pending, offset, batchSize: 2 })
         for (const k in counts) counts[k] += out.counts?.[k] || 0
         applyResults(out.results || [])
         processed += out.processed || 0

@@ -111,15 +111,15 @@ async function mergeSet(base, headers, set) {
   return res
 }
 
-// { base, authHeaders, duplicates:[{code,keep,remove[]}], offset, batchSize }
-export async function runMerge({ base, authHeaders, duplicates, offset = 0, batchSize = 20 }) {
+// { base, authHeaders, duplicates:[{code,keep,remove[]}], offset, batchSize, concurrency }
+export async function runMerge({ base, authHeaders, duplicates, offset = 0, batchSize = 20, concurrency = 2 }) {
   if (!Array.isArray(duplicates) || duplicates.length === 0) throw new Error('duplicates[] is required')
   const headers = { ...authHeaders, Accept: 'application/json' }
   const batch = duplicates.slice(offset, offset + batchSize)
   const results = []
   const counts = { sets: 0, removedLeads: 0, movedAddresses: 0, deletedAddresses: 0, errors: 0 }
 
-  await mapLimit(batch, 2, async (set) => {
+  await mapLimit(batch, concurrency, async (set) => {
     const r = await mergeSet(base, headers, set)
     results.push(r)
     if (r.ok && r.errors.length === 0) counts.sets++
