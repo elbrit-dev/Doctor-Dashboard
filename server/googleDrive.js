@@ -19,7 +19,11 @@
 import crypto from 'node:crypto'
 import { readFileSync } from 'node:fs'
 
-const FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID || process.env.VITE_GOOGLE_DRIVE_FOLDER_ID || ''
+// The shared "Doctor Details" folder id (from its Drive share link — not a
+// secret). Overridable via env; we DON'T fall back to VITE_GOOGLE_DRIVE_FOLDER_ID
+// because that stale build-time value had a wrong character and caused a 404.
+const DEFAULT_FOLDER_ID = '1pAzevSD8sVAEXlNP-nkzZ-YY4AnkHAgv'
+const FOLDER_ID = process.env.GOOGLE_DRIVE_FOLDER_ID || DEFAULT_FOLDER_ID
 const API_KEY = process.env.GOOGLE_DRIVE_API_KEY || process.env.GOOGLE_API_KEY || process.env.VITE_GOOGLE_API_KEY || ''
 const SA_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || ''
 const SA_FILE = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE || ''
