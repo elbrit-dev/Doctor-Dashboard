@@ -9,6 +9,10 @@
 //   sheet_blank  erp has a value, sheet is blank    ← usually fine (extra in erp)
 //   blank        both blank                          ← nothing to check
 
+// Shared with the server-side writer so the validation agrees with what gets
+// written: "Nellur" (sheet) and "HQ-Nellore" (ERPNext) are the SAME HQ.
+import { sameHq } from '../../server/hqMatch.js'
+
 // ---- normalizers ------------------------------------------------------------
 const text = (v) => (v == null ? '' : String(v).trim().replace(/\s+/g, ' ').toLowerCase())
 // name: drop leading salutation so "Dr Srinivasan" == "Srinivasan"
@@ -39,7 +43,7 @@ export const FIELDS = [
   { key: 'category1', label: 'Category 1', sheet: 'Category 1', erp: (d) => d.category1, norm: text },
   { key: 'category2', label: 'Category 2', sheet: 'Category 2', erp: (d) => d.category2, norm: text },
   { key: 'category3', label: 'Category 3', sheet: 'Category 3', erp: (d) => d.category3, norm: text },
-  { key: 'territory', label: 'HQ → Territory', sheet: 'HQ', erp: (d) => d.territory, norm: hq },
+  { key: 'territory', label: 'HQ → Territory', sheet: 'HQ', erp: (d) => d.territory, norm: hq, eq: sameHq },
   { key: 'state', label: 'State', sheet: 'State', erp: (d) => d.state, norm: state },
   { key: 'city', label: 'City', sheet: 'Dr. City (Clinic)', erp: (d) => d.city, norm: text },
   { key: 'mobile', label: 'Mobile', sheet: 'Mobile No.', erp: (d) => d.mobile, norm: phone },
@@ -75,7 +79,10 @@ function compareField(field, sheetRaw, erpRaw) {
   if (isBlank(a) && isBlank(b)) return { status: 'blank', sheet: sheetRaw, erp: erpRaw }
   if (isBlank(a)) return { status: 'sheet_blank', sheet: sheetRaw, erp: erpRaw }
   if (isBlank(b)) return { status: 'missing_erp', sheet: sheetRaw, erp: erpRaw }
-  return { status: a === b ? 'match' : 'mismatch', sheet: sheetRaw, erp: erpRaw }
+  // A field can supply a smarter equality (e.g. HQ phonetic/alias match) that
+  // treats formatting-only or same-place differences as equal.
+  const equal = field.eq ? field.eq(sheetRaw, erpRaw) : a === b
+  return { status: equal ? 'match' : 'mismatch', sheet: sheetRaw, erp: erpRaw }
 }
 
 const WORD_OVERLAP = 0.6 // sheet address words found in ERPNext to count as a match
@@ -105,7 +112,7 @@ function compareAddress(field, sheetRaw, addresses, docName) {
 
   // All words across every ERPNext address field — the sheet may combine into
   // one cell what ERPNext splits across title/line1/line2/city.
-  const erpVals = addresses.flatMap((x) => [x.title, x.line1, x.line2, x.city, x.county]).filter((v) => !isBlank(text(v)))
+  const erpVals = addresses.flatMap((x) => [x.title, x.line1, x.line2, x.line3, x.city, x.county]).filter((v) => !isBlank(text(v)))
   const erpWords = new Set(erpVals.flatMap(words))
   const disp = [...new Set(erpVals.map((v) => String(v).trim()))].join(' | ')
   if (erpWords.size === 0) return { status: 'missing_erp', sheet: sheetRaw, erp: '' }

@@ -59,6 +59,7 @@ export function mapLead(d, addresses = []) {
       type: a?.address_type ?? null,
       line1: a?.address_line1 ?? null,
       line2: a?.address_line2 ?? null,
+      line3: a?.address_line3 ?? null,
       city: a?.city ?? null,
       county: a?.county ?? null,
       state: a?.state ?? null,

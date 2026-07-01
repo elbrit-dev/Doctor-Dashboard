@@ -121,6 +121,7 @@ export function buildLead(r, code, name, dr, rp, territory) {
   const lead = {
     name, salutation: 'Dr', first_name: dr, custom_doctor_code: code,
     custom_specialty: g(r, 'Speciality'), custom_qualification: g(r, 'Qualification'), custom_category: (g(r, 'Category') || undefined),
+    custom_category1: (g(r, 'Category 1') || undefined), custom_category2: (g(r, 'Category 2') || undefined), custom_category3: (g(r, 'Category 3') || undefined),
     mobile_no: (mob || undefined),
     territory: territory || ('HQ-' + g(r, 'HQ')), state: g(r, 'State'), city: g(r, 'Dr. City (Clinic)'), country: CFG.COUNTRY,
     status: 'Active', lead_owner: CFG.LEAD_OWNER, company: CFG.COMPANY,
