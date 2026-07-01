@@ -28,6 +28,7 @@
 
 import { buildLead, buildAddress, strip } from './transform.js'
 import { fetchTerritories, makeTerritoryResolver } from './territory.js'
+import { leadCode } from './leadIndex.js'
 
 // ---- normalizers (kept in step with src/lib/reconcile.js) -------------------
 const text = (v) => (v == null ? '' : String(v).trim().replace(/\s+/g, ' ').toLowerCase())
@@ -121,9 +122,11 @@ async function resolveLeadNames(base, headers, codes) {
   await q('name', [...new Set(names)])
   await q('custom_doctor_code', [...new Set(dcodes)])
   const byCode = {}
-  const codeOf = (l) => strip(l.custom_doctor_code) || strip(String(l.name || '').replace(/^DR-?/i, ''))
+  // Use leadCode (NOT transform.strip): strip('') === '0', which would index a
+  // blank-doctor-code Lead under "0" and hide it from lookup. leadCode falls back
+  // to the DR-<code> name, so DR-38265 with an empty code still resolves to 38265.
   for (const l of rows) {
-    const c = codeOf(l); if (!c) continue
+    const c = leadCode(l); if (!c) continue
     if (!byCode[c] || l.name === `DR-${c}`) byCode[c] = l.name
   }
   return byCode
