@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { parseSheet } from '../lib/parseSheet.js'
 import { reconcileSheet, processBatch, updateBatch } from '../data/source.js'
+import { pickFromDrive } from '../lib/googleDrive.js'
 import { IconDownload } from './icons.jsx'
 import ReconcileView from './ReconcileView.jsx'
 import DuplicatesPanel from './DuplicatesPanel.jsx'
@@ -40,6 +41,7 @@ export default function TriageView({ live }) {
   const [selected, setSelected] = useState(() => new Set(bootUI?.selected || [])) // normalized codes chosen to create
   const [updateSelected, setUpdateSelected] = useState(() => new Set(bootUI?.updateSelected || [])) // codes chosen to update
   const [showValidate, setShowValidate] = useState(bootUI?.showValidate || false)
+  const [showFullValidate, setShowFullValidate] = useState(false) // full-file field comparison, gated behind a button
   const [storeWarn, setStoreWarn] = useState(false)
 
   // Update run state (drives the batched /api/update loop) — not persisted.
@@ -65,7 +67,7 @@ export default function TriageView({ live }) {
   const clearAll = () => {
     setData(null); setParsedRows(null); setFileName(''); setPhase('idle'); setError(null)
     setSelected(new Set()); setUpdateSelected(new Set()); setRunReport(null); setShowValidate(false); setRunProg(null); setRunError(null)
-    setUpdReport(null); setUpdProg(null); setUpdError(null)
+    setUpdReport(null); setUpdProg(null); setUpdError(null); setShowFullValidate(false)
     setStoreWarn(false)
     dropJSON(STORE_DATA); dropJSON(STORE_UI)
   }
@@ -114,11 +116,12 @@ export default function TriageView({ live }) {
     }
   }
 
-  const onFile = async (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  // Parse + triage a chosen sheet (local upload or Google Drive), shared by both
+  // entry points so the two behave identically from here on.
+  const processFile = async (file) => {
     setFileName(file.name); setError(null); setPhase('working'); setData(null); setParsedRows(null)
-    setRunReport(null); setRunError(null); setRunProg(null); setSelected(new Set()); setUpdateSelected(new Set()); setShowValidate(false); setStoreWarn(false)
+    setRunReport(null); setRunError(null); setRunProg(null); setSelected(new Set()); setUpdateSelected(new Set())
+    setShowValidate(false); setShowFullValidate(false); setUpdReport(null); setUpdProg(null); setUpdError(null); setStoreWarn(false)
     try {
       const { rows } = await parseSheet(file)
       const out = await reconcileSheet(rows.map((r) => r.raw))
@@ -128,6 +131,25 @@ export default function TriageView({ live }) {
       setUpdateSelected(new Set(out.update.map((u) => u.code)))
     } catch (err) {
       setError(err.message); setPhase('error')
+    }
+  }
+
+  const onFile = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = '' // allow re-picking the same file later
+    processFile(file)
+  }
+
+  // Open the Google Drive picker; on selection, run the same parse+triage path.
+  const onDrive = async () => {
+    if (phase === 'working') return
+    setError(null)
+    try {
+      const file = await pickFromDrive()
+      if (file) processFile(file)
+    } catch (err) {
+      setError(err.message); setPhase(data ? 'done' : 'error')
     }
   }
 
@@ -175,14 +197,6 @@ export default function TriageView({ live }) {
     }
   }
 
-  // Parsed rows whose code already exists in UAT — fed to the embedded
-  // field-comparison so the "update" doctors get the full diff + filters.
-  const updateRows = useMemo(() => {
-    if (!data || !parsedRows) return []
-    const set = new Set(data.update.map((u) => u.code))
-    return parsedRows.filter((r) => set.has(nc(r.code)))
-  }, [data, parsedRows])
-
   // Rows whose Lead was successfully created this run — fed to the Validate
   // field-comparison so you can confirm each created doctor landed in UAT with
   // the right fields (and spot anything missing).
@@ -217,6 +231,9 @@ export default function TriageView({ live }) {
           </div>
           <button className="export-btn" onClick={() => fileRef.current?.click()} disabled={phase === 'working'}>
             {phase === 'working' ? 'Checking…' : 'Upload sheet'}
+          </button>
+          <button className="export-btn" onClick={onDrive} disabled={phase === 'working'} title="Pick a sheet from Google Drive">
+            Choose from Google Drive
           </button>
           {data && (
             <button className="export-btn" onClick={clearAll} disabled={running || phase === 'working'} title="Clear the saved sheet and result">
@@ -282,16 +299,30 @@ export default function TriageView({ live }) {
             onUpdate={runUpdate}
           />
 
-          <div className="stack" style={{ gap: 10 }}>
-            <div className="section-label" style={{ marginBottom: 0 }}>
-              To update — already in UAT ({data.counts.update}) · compared field-by-field below
+          <div className="card" style={{ padding: 18 }}>
+            <div className="rc-upload" style={{ alignItems: 'flex-start' }}>
+              <div>
+                <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>Validate fully against UAT</h3>
+                <p className="card__hint" style={{ margin: 0 }}>
+                  Run this <b>after</b> Create, Duplicate merge and Update. It compares the entire uploaded
+                  sheet ({parsedRows ? parsedRows.length : 0} rows) field-by-field against UAT and shows the
+                  mismatches, so you can confirm every doctor landed correctly.
+                </p>
+              </div>
+              <button
+                className="btn btn--ready"
+                style={{ flexShrink: 0 }}
+                disabled={running || updRunning || !parsedRows || parsedRows.length === 0}
+                onClick={() => setShowFullValidate((v) => !v)}
+              >
+                {showFullValidate ? 'Hide validation' : 'Validate fully'}
+              </button>
             </div>
-            {updateRows.length > 0 ? (
-              <ReconcileView live={live} embedded rows={updateRows} />
-            ) : (
-              <div className="card"><p className="card__hint" style={{ padding: '4px 4px 8px' }}>None to update.</p></div>
-            )}
           </div>
+
+          {showFullValidate && parsedRows && parsedRows.length > 0 && (
+            <ReconcileView live={live} embedded rows={parsedRows} />
+          )}
         </>
       )}
     </div>

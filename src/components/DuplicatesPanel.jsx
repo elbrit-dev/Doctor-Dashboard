@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { mergeDuplicatesBatch } from '../data/source.js'
 import { IconDownload } from './icons.jsx'
 
-const CAP = 300
+const DUP_PAGE = 20 // same paginated 20/page layout as the "To update" table
 
 // Duplicate IDs (same code stored as clean DR-<code> + padded DR-000<code>).
 // Merge each padded Lead's addresses onto the clean one, then delete the padded
@@ -14,6 +14,7 @@ export default function DuplicatesPanel({ duplicates, onExport }) {
   const [report, setReport] = useState(null) // { counts }
   const [error, setError] = useState(null)
   const [done, setDone] = useState(() => new Set()) // codes fully merged
+  const [page, setPage] = useState(0)
 
   const pending = duplicates.filter((d) => !done.has(d.code))
 
@@ -76,6 +77,9 @@ export default function DuplicatesPanel({ duplicates, onExport }) {
 
   const c = report?.counts
   const pct = prog && prog.total ? Math.round((prog.processed / prog.total) * 100) : 0
+  const pages = Math.max(1, Math.ceil(duplicates.length / DUP_PAGE))
+  const p = Math.min(page, pages - 1)
+  const pageDupes = duplicates.slice(p * DUP_PAGE, p * DUP_PAGE + DUP_PAGE)
 
   return (
     <div className="card">
@@ -118,7 +122,7 @@ export default function DuplicatesPanel({ duplicates, onExport }) {
         <p className="card__hint" style={{ padding: '4px 4px 8px' }}>No duplicate IDs among this sheet's codes. ✅</p>
       ) : (
         <div className="dup-list">
-          {duplicates.slice(0, CAP).map((d) => {
+          {pageDupes.map((d) => {
             const isDone = done.has(d.code)
             return (
               <div className="dup-item" key={d.code} style={isDone ? { opacity: 0.55 } : undefined}>
@@ -143,7 +147,13 @@ export default function DuplicatesPanel({ duplicates, onExport }) {
               </div>
             )
           })}
-          {duplicates.length > CAP && <p className="card__hint">Showing first {CAP} of {duplicates.length}. "Merge 0-series → clean" processes every set.</p>}
+          {pages > 1 && (
+            <div className="rc-pager">
+              <button disabled={p === 0} onClick={() => setPage(p - 1)}>← Prev</button>
+              <span>Page {p + 1} of {pages} · {duplicates.length} sets · {DUP_PAGE}/page</span>
+              <button disabled={p >= pages - 1} onClick={() => setPage(p + 1)}>Next →</button>
+            </div>
+          )}
         </div>
       )}
     </div>
