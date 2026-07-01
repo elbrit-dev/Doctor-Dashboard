@@ -101,7 +101,7 @@ function classify(a1, a2, a3, dr) {
   return { type: 'Doctor', title: dr, line1: a1, line2: a2, line3: a3 }
 }
 
-function buildAddress(r, name, dr) {
+export function buildAddress(r, name, dr) {
   const a = classify(g(r, 'Clinic Info - Address 1'), g(r, 'Clinic Info - Address 2'), g(r, 'Clinic Info - Address 3'), dr)
   if (!a) return null
   return {
@@ -113,7 +113,7 @@ function buildAddress(r, name, dr) {
 
 // The full create-Lead body, verbatim from the node (custom_address_created is
 // set by the caller once the address is known).
-function buildLead(r, code, name, dr, rp) {
+export function buildLead(r, code, name, dr, rp) {
   const mob = String(g(r, 'Mobile No.') || '').replace(/\D/g, '')
   const lead = {
     name, salutation: 'Dr', first_name: dr, custom_doctor_code: code,

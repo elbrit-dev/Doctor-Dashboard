@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { parseSheet } from '../lib/parseSheet.js'
-import { reconcileSheet, processBatch } from '../data/source.js'
+import { reconcileSheet, processBatch, updateBatch } from '../data/source.js'
 import { IconDownload } from './icons.jsx'
 import ReconcileView from './ReconcileView.jsx'
 import DuplicatesPanel from './DuplicatesPanel.jsx'
@@ -42,6 +42,12 @@ export default function TriageView({ live }) {
   const [showValidate, setShowValidate] = useState(bootUI?.showValidate || false)
   const [storeWarn, setStoreWarn] = useState(false)
 
+  // Update run state (drives the batched /api/update loop) — not persisted.
+  const [updRunning, setUpdRunning] = useState(false)
+  const [updProg, setUpdProg] = useState(null) // { processed, total }
+  const [updReport, setUpdReport] = useState(null) // { counts, results }
+  const [updError, setUpdError] = useState(null)
+
   // Save heavy payload only when the sheet/result changes (i.e. on upload/clear).
   useEffect(() => {
     if (data && parsedRows) {
@@ -59,14 +65,53 @@ export default function TriageView({ live }) {
   const clearAll = () => {
     setData(null); setParsedRows(null); setFileName(''); setPhase('idle'); setError(null)
     setSelected(new Set()); setUpdateSelected(new Set()); setRunReport(null); setShowValidate(false); setRunProg(null); setRunError(null)
+    setUpdReport(null); setUpdProg(null); setUpdError(null)
     setStoreWarn(false)
     dropJSON(STORE_DATA); dropJSON(STORE_UI)
   }
 
-  // Update action — the write logic will be supplied later; for now the button
-  // just surfaces the selected count so the flow/UX is in place.
-  const runUpdate = (codes) => {
-    window.alert(`Update ${codes.length} selected doctor(s) in UAT — update logic pending (to be provided).`)
+  // Loop /api/update batch-by-batch (stateless server; we own the offset) for the
+  // selected "already in UAT" codes: scalar backfill on change, append the
+  // employee's role profile if missing, append the sheet's address if new. Never
+  // creates a Lead — re-running is safe (unchanged rows are no-ops).
+  const runUpdate = async (codes) => {
+    if (!parsedRows || updRunning || codes.length === 0) return
+    const wanted = new Set(codes)
+    const fullRows = parsedRows.filter((r) => wanted.has(nc(r.code))).map((r) => r.raw)
+    if (fullRows.length === 0) return
+    if (!window.confirm(
+      `UPDATE ${codes.length} selected doctor(s) already in ERPNext UAT?\n\n` +
+      `Writes live: changed fields are updated, the employee's role profile is added if missing, ` +
+      `and a new address is added only when the sheet's address isn't already on the Lead. ` +
+      `Existing addresses and other role profiles are never removed. Re-running is safe.`,
+    )) return
+
+    const total = fullRows.length
+    const counts = { updated: 0, unchanged: 0, addressAdded: 0, roleAdded: 0, notFound: 0, errors: 0 }
+    const results = []
+    setUpdRunning(true); setUpdError(null); setUpdProg({ processed: 0, total })
+    setUpdReport({ counts: { ...counts }, results })
+
+    try {
+      let offset = 0
+      let processed = 0
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        // eslint-disable-next-line no-await-in-loop
+        const out = await updateBatch({ rows: fullRows, offset, batchSize: 40 })
+        for (const k in counts) counts[k] += out.counts?.[k] || 0
+        results.push(...(out.results || []))
+        processed += out.processed || 0
+        setUpdProg({ processed, total: out.total ?? total })
+        setUpdReport({ counts: { ...counts }, results: [...results] })
+        if (out.done || out.nextOffset == null) break
+        offset = out.nextOffset
+      }
+    } catch (err) {
+      setUpdError(err.message)
+    } finally {
+      setUpdRunning(false)
+    }
   }
 
   const onFile = async (e) => {
@@ -229,7 +274,11 @@ export default function TriageView({ live }) {
             rows={data.update}
             selected={updateSelected}
             setSelected={setUpdateSelected}
-            disabled={running}
+            disabled={running || updRunning}
+            running={updRunning}
+            prog={updProg}
+            report={updReport}
+            error={updError}
             onUpdate={runUpdate}
           />
 
@@ -311,7 +360,7 @@ function CreateBlock({ rows, selected, setSelected, disabled, onExport }) {
 // (covers every code across pages) and an Update button (write logic supplied
 // later). The field-by-field comparison below is a separate, untouched section.
 const UPDATE_PAGE = 20
-function UpdateBlock({ rows, selected, setSelected, disabled, onUpdate }) {
+function UpdateBlock({ rows, selected, setSelected, disabled, running, prog, report, error, onUpdate }) {
   const [page, setPage] = useState(0)
   const allCodes = rows.map((r) => r.code)
   const allOn = allCodes.length > 0 && allCodes.every((c) => selected.has(c))
@@ -320,6 +369,9 @@ function UpdateBlock({ rows, selected, setSelected, disabled, onUpdate }) {
   const pages = Math.max(1, Math.ceil(rows.length / UPDATE_PAGE))
   const p = Math.min(page, pages - 1)
   const pageRows = rows.slice(p * UPDATE_PAGE, p * UPDATE_PAGE + UPDATE_PAGE)
+  const pct = prog && prog.total ? Math.round((prog.processed / prog.total) * 100) : 0
+  const c = report?.counts
+  const errs = report ? report.results.filter((r) => !r.ok) : []
   return (
     <div className="card">
       <div className="toolbar">
@@ -328,9 +380,55 @@ function UpdateBlock({ rows, selected, setSelected, disabled, onUpdate }) {
         </span>
         <div className="filterbar__spacer" />
         <button className="btn btn--ready" disabled={disabled || selected.size === 0} onClick={() => onUpdate([...selected])}>
-          Update selected · {selected.size}
+          {running ? 'Updating…' : `Update selected · ${selected.size}`}
         </button>
       </div>
+      <p className="card__hint" style={{ padding: '0 4px 8px', margin: 0 }}>
+        Updates changed fields only, adds the employee's role profile if missing, and adds the sheet's address
+        only when it isn't already on the Lead (matched on address + city). Existing addresses and other
+        departments' role profiles are never removed. Runs in batches; re-running is safe.
+      </p>
+
+      {prog && (
+        <div style={{ padding: '0 4px 8px' }}>
+          <div style={{ height: 10, borderRadius: 6, background: 'rgba(148,163,184,0.25)', overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${pct}%`, background: 'var(--accent, #2563eb)', transition: 'width .25s ease' }} />
+          </div>
+          <p className="card__hint" style={{ margin: '6px 0 0' }}>
+            {running ? 'Updating' : 'Done'} — {prog.processed}/{prog.total} rows ({pct}%)
+          </p>
+        </div>
+      )}
+
+      {error && <p className="reviewbox__msg err" style={{ margin: '0 4px 10px' }}>Error: {error}</p>}
+
+      {c && (
+        <div className="rc-kpis" style={{ margin: '0 4px 12px' }}>
+          <Kpi n={c.updated} label="Updated" tone="ok" />
+          <Kpi n={c.unchanged} label="Unchanged" />
+          <Kpi n={c.addressAdded} label="Addresses added" />
+          <Kpi n={c.roleAdded} label="Role profiles added" />
+          <Kpi n={c.errors + c.notFound} label="Errors" tone={c.errors + c.notFound ? 'error' : ''} />
+        </div>
+      )}
+
+      {errs.length > 0 && (
+        <div className="table-wrap" style={{ margin: '0 4px 12px' }}>
+          <div className="section-label">Update errors ({errs.length})</div>
+          <table className="dt">
+            <thead><tr><th>Dr Code</th><th>Lead</th><th>Detail</th></tr></thead>
+            <tbody>
+              {errs.slice(0, CAP).map((r, i) => (
+                <tr key={r.code + i}>
+                  <td className="code">{r.code}</td><td>{r.name || '—'}</td>
+                  <td style={{ maxWidth: 460, whiteSpace: 'normal' }}>{r.error || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {errs.length > CAP && <p className="card__hint" style={{ padding: 8 }}>Showing first {CAP} of {errs.length}.</p>}
+        </div>
+      )}
       {rows.length === 0 ? (
         <p className="card__hint" style={{ padding: '4px 4px 8px' }}>None already in UAT.</p>
       ) : (

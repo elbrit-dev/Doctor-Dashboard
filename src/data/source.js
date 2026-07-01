@@ -80,6 +80,21 @@ export async function processBatch({ rows, offset = 0, batchSize = 50 }) {
   return body
 }
 
+// Update one batch of EXISTING Leads (codes already in UAT): scalar backfill on
+// change, append the employee's role profile if missing, and append the sheet's
+// address if it isn't already on the Lead. Never creates. Stateless per call —
+// the caller drives the offset loop until the response says { done: true }.
+export async function updateBatch({ rows, offset = 0, batchSize = 40 }) {
+  const res = await fetch('/api/update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ rows, offset, batchSize }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`)
+  return body
+}
+
 // Merge padded duplicate Leads into their clean form (moving addresses) and
 // delete the padded ones. Stateless per call — caller drives the offset loop.
 export async function mergeDuplicatesBatch({ duplicates, offset = 0, batchSize = 20 }) {

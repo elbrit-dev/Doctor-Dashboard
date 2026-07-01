@@ -15,6 +15,7 @@ import { DOCTOR_IDS } from './doctorIds.js'
 import { mapLead } from './mapLead.js'
 import { triage } from './triage.js'
 import { runProcess } from './process.js'
+import { runUpdate } from './updateLeads.js'
 import { runMerge } from './mergeDuplicates.js'
 import { fetchDoctorLeads } from './leadIndex.js'
 
@@ -170,6 +171,28 @@ app.post('/api/process', async (req, res) => {
     res.json({ source: `ERPNext · ${BASE}`, action: 'create', ...out })
   } catch (err) {
     console.error('[proxy] process failed:', err.message)
+    res.status(502).json({ error: 'ERPNext request failed', detail: err.message })
+  }
+})
+
+// Batched UPDATE of EXISTING Leads from an uploaded sheet (scalar backfill +
+// append role profile + append new address; never creates). Stateless per
+// batch — the frontend drives the offset loop. POST { rows, offset?, batchSize? }.
+app.post('/api/update', async (req, res) => {
+  if (!configured()) return res.status(503).json({ error: 'ERPNext not configured' })
+  const { rows, offset, batchSize } = req.body || {}
+  if (!Array.isArray(rows) || rows.length === 0) return res.status(400).json({ error: 'rows[] is required' })
+  try {
+    const out = await runUpdate({
+      base: BASE,
+      authHeaders,
+      rows,
+      offset: Number(offset) || 0,
+      batchSize: Number(batchSize) || 40,
+    })
+    res.json({ source: `ERPNext · ${BASE}`, action: 'update', ...out })
+  } catch (err) {
+    console.error('[proxy] update failed:', err.message)
     res.status(502).json({ error: 'ERPNext request failed', detail: err.message })
   }
 })

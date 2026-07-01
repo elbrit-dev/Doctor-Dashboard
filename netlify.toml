@@ -36,6 +36,12 @@
   to = "/.netlify/functions/process"
   status = 200
 
+# Batched update of EXISTING Leads (scalar backfill + role profile + address).
+[[redirects]]
+  from = "/api/update"
+  to = "/.netlify/functions/update"
+  status = 200
+
 # Merge padded duplicate Leads into their clean form and delete the padded ones.
 [[redirects]]
   from = "/api/merge-duplicates"
