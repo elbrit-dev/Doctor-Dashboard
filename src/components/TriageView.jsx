@@ -379,7 +379,13 @@ export default function TriageView({ live }) {
                 className="btn btn--ready"
                 style={{ flexShrink: 0 }}
                 disabled={running || updRunning || !parsedRows || parsedRows.length === 0}
-                onClick={() => setShowFullValidate((v) => !v)}
+                onClick={() => {
+                  const next = !showFullValidate
+                  setShowFullValidate(next)
+                  // "Validate fully" is the last step in the workflow — running it
+                  // marks this Drive sheet ✓ Completed in the folder list.
+                  if (next && activeFileId) setCompleted((prev) => (prev.has(activeFileId) ? prev : new Set([...prev, activeFileId])))
+                }}
               >
                 {showFullValidate ? 'Hide validation' : 'Validate fully'}
               </button>
