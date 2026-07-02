@@ -336,7 +336,7 @@ function parseReview(c) {
 // Build the timeline comment body the CRM review writes to ERPNext.
 function buildReviewComment(decision, issues, note, by) {
   if (decision === 'ready') {
-    return `<b>${REVIEW_MARKER}: ✅ READY</b> — data verified correct.` + (note ? `<br>Note: ${esc(note)}` : '') + `<br><i>by ${esc(by)} via dashboard</i>`
+    return `<b>${REVIEW_MARKER}: ✅ COMPLETED</b> — validation done.` + (note ? `<br>Note: ${esc(note)}` : '') + `<br><i>by ${esc(by)} via dashboard</i>`
   }
   const list = (issues || []).filter(Boolean).map(esc)
   const issuesHtml = list.length ? `<br>Issues: ${list.join(', ')}` : ''

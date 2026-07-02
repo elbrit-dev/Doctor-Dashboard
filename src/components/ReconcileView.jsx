@@ -32,10 +32,16 @@ export default function ReconcileView({ live, rows: externalRows = null, embedde
   const [reviewed, setReviewed] = useState({}) // code -> 'ready' | 'error'
   const [reviewBusy, setReviewBusy] = useState(null) // a code, or 'bulk'
   const [bulkProg, setBulkProg] = useState(null)
+  const [selected, setSelected] = useState(() => new Set()) // codes ticked for bulk review
 
-  const issueList = (r) =>
-    cols.filter((f) => ['mismatch', 'missing_erp'].includes(r.fields[f.key]?.status))
-      .map((f) => `${f.label}: sheet "${fmt(r.fields[f.key].sheet)}" / UAT "${fmt(r.fields[f.key].erp)}"`)
+  const toggleSel = (code) => setSelected((s) => { const n = new Set(s); n.has(code) ? n.delete(code) : n.add(code); return n })
+
+  // Error detail posted to ERPNext: field + error TYPE + both values.
+  const issueList = (r) => {
+    if (!r.found) return ['Record not found in ERPNext']
+    return cols.filter((f) => ['mismatch', 'missing_erp'].includes(r.fields[f.key]?.status))
+      .map((f) => `${f.label} (${STATUS_META[r.fields[f.key].status].label}): sheet "${fmt(r.fields[f.key].sheet)}" / UAT "${fmt(r.fields[f.key].erp)}"`)
+  }
 
   const reviewRow = async (r, decision) => {
     if (!r.erpId) return
@@ -50,22 +56,26 @@ export default function ReconcileView({ live, rows: externalRows = null, embedde
     }
   }
 
-  const bulkReadyClean = async () => {
-    const clean = data.results.filter((r) => r.found && !r.hasIssue && reviewed[r.code] !== 'ready')
-    if (clean.length === 0) return
-    if (!window.confirm(`Post a "Ready" review comment to ${clean.length} clean doctor(s) in UAT? This writes to ERPNext.`)) return
-    setReviewBusy('bulk'); setBulkProg({ done: 0, total: clean.length })
+  // Post a review comment to every SELECTED (ticked) doctor: "Completed" for
+  // ready, or the error type list for error. The CRM team ticks the rows they've
+  // checked and applies one decision to all of them.
+  const bulkReview = async (decision) => {
+    const rows = data.results.filter((r) => r.found && selected.has(r.code))
+    if (rows.length === 0) return
+    const label = decision === 'ready' ? 'Completed' : 'Error'
+    if (!window.confirm(`Post a "${label}" comment to ${rows.length} selected doctor(s) in ERPNext UAT?`)) return
+    setReviewBusy('bulk'); setBulkProg({ done: 0, total: rows.length })
     const CONC = 6
-    for (let i = 0; i < clean.length; i += CONC) {
-      const batch = clean.slice(i, i + CONC)
+    for (let i = 0; i < rows.length; i += CONC) {
+      const batch = rows.slice(i, i + CONC)
       // eslint-disable-next-line no-await-in-loop
       await Promise.all(batch.map((r) =>
-        submitReview({ id: r.erpId, decision: 'ready', by: 'it@elbrit.org' })
-          .then(() => setReviewed((m) => ({ ...m, [r.code]: 'ready' })))
+        submitReview({ id: r.erpId, decision, issues: decision === 'error' ? issueList(r) : [], by: 'it@elbrit.org' })
+          .then(() => setReviewed((m) => ({ ...m, [r.code]: decision })))
           .catch(() => {})))
-      setBulkProg({ done: Math.min(i + CONC, clean.length), total: clean.length })
+      setBulkProg({ done: Math.min(i + CONC, rows.length), total: rows.length })
     }
-    setReviewBusy(null); setBulkProg(null)
+    setReviewBusy(null); setBulkProg(null); setSelected(new Set())
   }
 
   const runRows = async (rows) => {
@@ -123,6 +133,16 @@ export default function ReconcileView({ live, rows: externalRows = null, embedde
     () => (data ? FIELDS.filter((f) => data.summary.activeFields.includes(f.key)) : FIELDS),
     [data],
   )
+
+  // Select-all covers every found row in the CURRENT filter (not just the page).
+  const selectableCodes = filtered.filter((r) => r.found).map((r) => r.code)
+  const allSelected = selectableCodes.length > 0 && selectableCodes.every((c) => selected.has(c))
+  const toggleSelectAll = () => setSelected((s) => {
+    const n = new Set(s)
+    if (allSelected) selectableCodes.forEach((c) => n.delete(c))
+    else selectableCodes.forEach((c) => n.add(c))
+    return n
+  })
 
   if (!live) {
     return (
@@ -224,22 +244,37 @@ export default function ReconcileView({ live, rows: externalRows = null, embedde
               <button className="export-btn" onClick={() => exportUAT(data.results, cols)} title="Excel of the UAT values only, for the codes in this sheet">
                 <IconDownload width={15} height={15} /> Export UAT
               </button>
-              <button
-                className="btn btn--ready"
-                onClick={bulkReadyClean}
-                disabled={reviewBusy != null || data.summary.clean === 0}
-                title="Post a Ready review comment in UAT for every clean (all-match) doctor"
-              >
-                {reviewBusy === 'bulk' && bulkProg
-                  ? `Reviewing ${bulkProg.done}/${bulkProg.total}…`
-                  : `✅ Bulk review clean (${data.summary.clean})`}
-              </button>
+              {reviewBusy === 'bulk' && bulkProg ? (
+                <span className="card__hint" style={{ alignSelf: 'center' }}>Posting {bulkProg.done}/{bulkProg.total}…</span>
+              ) : (
+                <>
+                  <button
+                    className="btn btn--ready"
+                    onClick={() => bulkReview('ready')}
+                    disabled={reviewBusy != null || selected.size === 0}
+                    title="Post a ✅ Completed comment in UAT for every ticked doctor"
+                  >
+                    ✅ Completed ({selected.size})
+                  </button>
+                  <button
+                    className="btn btn--error"
+                    onClick={() => bulkReview('error')}
+                    disabled={reviewBusy != null || selected.size === 0}
+                    title="Post a ⚠️ Error comment (with the error type) in UAT for every ticked doctor"
+                  >
+                    ⚠️ Error ({selected.size})
+                  </button>
+                </>
+              )}
             </div>
 
             <div className="table-wrap">
               <table className="dt rc-table">
                 <thead>
                   <tr>
+                    <th style={{ width: 32 }}>
+                      <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} title="Select all found rows in this filter" />
+                    </th>
                     <th>Code</th>
                     <th>Doctor (sheet)</th>
                     {cols.map((f) => <th key={f.key} className="rc-th" title={f.label}>{f.label}</th>)}
@@ -254,6 +289,8 @@ export default function ReconcileView({ live, rows: externalRows = null, embedde
                       reviewedAs={reviewed[r.code]}
                       busy={reviewBusy === r.code}
                       onReview={reviewRow}
+                      isSelected={selected.has(r.code)}
+                      onToggleSel={toggleSel}
                     />
                   ))}
                 </tbody>
@@ -275,10 +312,11 @@ export default function ReconcileView({ live, rows: externalRows = null, embedde
   )
 }
 
-function Row({ r, fields, expanded, onToggle, reviewedAs, busy, onReview }) {
+function Row({ r, fields, expanded, onToggle, reviewedAs, busy, onReview, isSelected, onToggleSel }) {
   if (!r.found) {
     return (
       <tr className="rc-notfound" onClick={onToggle}>
+        <td />
         <td className="code">{r.code}</td>
         <td>{r.sheetName || '—'}</td>
         <td colSpan={fields.length}><span className="sev-error" style={{ fontWeight: 600 }}>No matching record in ERPNext</span></td>
@@ -288,6 +326,9 @@ function Row({ r, fields, expanded, onToggle, reviewedAs, busy, onReview }) {
   return (
     <>
       <tr className={r.hasIssue ? 'rc-hasissue' : ''} onClick={onToggle}>
+        <td onClick={(e) => e.stopPropagation()}>
+          <input type="checkbox" checked={!!isSelected} onChange={() => onToggleSel(r.code)} title="Select for bulk review" />
+        </td>
         <td className="code">{r.code}</td>
         <td>
           <div className="docname">{r.sheetName || '—'}</div>
@@ -306,7 +347,7 @@ function Row({ r, fields, expanded, onToggle, reviewedAs, busy, onReview }) {
       </tr>
       {expanded && (
         <tr className="rc-detail-row">
-          <td colSpan={fields.length + 2}>
+          <td colSpan={fields.length + 3}>
             <div className="rc-detail">
               {fields.filter((f) => ['mismatch', 'missing_erp'].includes(r.fields[f.key].status)).map((f) => {
                 const c = r.fields[f.key]
