@@ -10,8 +10,9 @@
 //   blank        both blank                          ← nothing to check
 
 // Shared with the server-side writer so the validation agrees with what gets
-// written: "Nellur" (sheet) and "HQ-Nellore" (ERPNext) are the SAME HQ.
-import { sameHq } from '../../server/hqMatch.js'
+// written: "Nellur" (sheet) and "HQ-Nellore" (ERPNext) are the SAME HQ. lev +
+// soundex also power spelling-tolerant address-word matching below.
+import { sameHq, lev, soundex } from '../../server/hqMatch.js'
 
 // ---- normalizers ------------------------------------------------------------
 const text = (v) => (v == null ? '' : String(v).trim().replace(/\s+/g, ' ').toLowerCase())
@@ -96,6 +97,22 @@ function compareField(field, sheetRaw, erpRaw) {
 const WORD_OVERLAP = 0.6 // sheet address words found in ERPNext to count as a match
 const words = (s) => text(s).split(/\s+/).filter((w) => w.length > 1)
 
+// A sheet address word "hits" ERPNext if it matches a word exactly, by near
+// spelling (VADAPALNI ≈ Vadapalani), or by pronunciation (Purasivakkam ≈
+// Purasaiwakkam). Only tokens of 4+ chars are fuzzy-matched, so short bits like
+// "st"/"rd"/"no" never match loosely.
+const FUZZY_MIN = 4
+const wordHit = (w, erpWords, erpSx) => {
+  if (erpWords.has(w)) return true
+  if (w.length < FUZZY_MIN) return false
+  if (erpSx.has(soundex(w))) return true
+  const thr = Math.max(1, Math.floor(w.length * 0.2))
+  for (const ew of erpWords) {
+    if (ew.length >= FUZZY_MIN && Math.abs(ew.length - w.length) <= thr && lev(w, ew) <= thr) return true
+  }
+  return false
+}
+
 // Compare a sheet address line against ALL of the doctor's ERPNext addresses.
 // status: blank / missing_erp / match / mismatch.
 function compareAddress(field, sheetRaw, addresses, docName) {
@@ -127,7 +144,8 @@ function compareAddress(field, sheetRaw, addresses, docName) {
 
   const sheetWords = [...new Set(words(a))]
   if (sheetWords.length === 0) return { status: 'blank', sheet: sheetRaw, erp: disp }
-  const hit = sheetWords.filter((w) => erpWords.has(w)).length
+  const erpSx = new Set([...erpWords].filter((w) => w.length >= FUZZY_MIN).map(soundex))
+  const hit = sheetWords.filter((w) => wordHit(w, erpWords, erpSx)).length
   return { status: hit / sheetWords.length >= WORD_OVERLAP ? 'match' : 'mismatch', sheet: sheetRaw, erp: disp }
 }
 
