@@ -18,9 +18,11 @@ const CAP = 300 // max rows rendered per block; full data is in the export
 const STORE_DATA = 'dvd-triage-data-v1'
 const STORE_UI = 'dvd-triage-ui-v1'
 const STORE_DONE = 'dvd-drive-done-v1' // Drive file ids marked completed (survives Clear)
+const STORE_UPD = 'dvd-upd-done-v1'    // per-sheet: codes already updated OK (so re-runs skip them)
 const readJSON = (k) => { try { const s = localStorage.getItem(k); return s ? JSON.parse(s) : null } catch { return null } }
 const writeJSON = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true } catch { return false } }
 const dropJSON = (k) => { try { localStorage.removeItem(k) } catch { /* ignore */ } }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 export default function TriageView({ live }) {
   // Rehydrate once from localStorage (lazy initializers run a single time).
@@ -61,6 +63,21 @@ export default function TriageView({ live }) {
   // Collapse the (long) folder list once a sheet is loaded, to keep the focus on
   // the create/update work. Starts collapsed if a sheet was already open.
   const [driveCollapsed, setDriveCollapsed] = useState(!!bootUI?.activeFileId)
+
+  // Codes already updated OK for the current sheet — persisted so a re-run (after
+  // errors, or after a refresh) only re-processes the ones still pending, instead
+  // of grinding through all thousands again.
+  const sheetKey = activeFileId || fileName || ''
+  const [updDone, setUpdDone] = useState(() => new Set())
+  useEffect(() => {
+    setUpdDone(new Set((readJSON(STORE_UPD) || {})[sheetKey] || []))
+  }, [sheetKey])
+  const persistUpdDone = (set) => {
+    if (!sheetKey) return
+    const all = readJSON(STORE_UPD) || {}
+    all[sheetKey] = [...set]
+    writeJSON(STORE_UPD, all)
+  }
 
   // Save heavy payload only when the sheet/result changes (i.e. on upload/clear).
   useEffect(() => {
@@ -130,42 +147,67 @@ export default function TriageView({ live }) {
   // creates a Lead — re-running is safe (unchanged rows are no-ops).
   const runUpdate = async (codes) => {
     if (!parsedRows || updRunning || codes.length === 0) return
-    const wanted = new Set(codes)
+    // Re-run only what's still pending: skip codes already updated OK in a prior
+    // run (persisted per sheet), the same way Create skips codes already in UAT.
+    const pending = codes.filter((c) => !updDone.has(c))
+    const alreadyDone = codes.length - pending.length
+    if (pending.length === 0) { window.alert('All selected doctors are already updated. Nothing left to do.'); return }
+    const wanted = new Set(pending)
     const fullRows = parsedRows.filter((r) => wanted.has(nc(r.code))).map((r) => r.raw)
     if (fullRows.length === 0) return
     if (!window.confirm(
-      `UPDATE ${codes.length} selected doctor(s) already in ERPNext UAT?\n\n` +
-      `Writes live: changed fields are updated, the employee's role profile is added if missing, ` +
+      `UPDATE ${pending.length} doctor(s) already in ERPNext UAT?` +
+      (alreadyDone ? `\n\n(${alreadyDone} already updated in a previous run are skipped.)` : '') +
+      `\n\nWrites live: changed fields are updated, the employee's role profile is added if missing, ` +
       `and a new address is added only when the sheet's address isn't already on the Lead. ` +
-      `Existing addresses and other role profiles are never removed. Re-running is safe.`,
+      `Existing addresses and other role profiles are never removed. A failed batch is retried and, ` +
+      `if it still fails, marked as an error and skipped — the run continues to the end.`,
     )) return
 
     const total = fullRows.length
     const counts = { updated: 0, unchanged: 0, addressAdded: 0, roleAdded: 0, notFound: 0, errors: 0 }
     const results = []
+    const doneCodes = new Set(updDone)
     setUpdRunning(true); setUpdError(null); setUpdProg({ processed: 0, total })
     setUpdReport({ counts: { ...counts }, results })
 
-    try {
-      let offset = 0
-      let processed = 0
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        // eslint-disable-next-line no-await-in-loop
-        const out = await updateBatch({ rows: fullRows, offset, batchSize: 40 })
-        for (const k in counts) counts[k] += out.counts?.[k] || 0
-        results.push(...(out.results || []))
-        processed += out.processed || 0
-        setUpdProg({ processed, total: out.total ?? total })
-        setUpdReport({ counts: { ...counts }, results: [...results] })
-        if (out.done || out.nextOffset == null) break
-        offset = out.nextOffset
+    const BATCH = 40
+    let offset = 0
+    let processed = 0
+    while (offset < fullRows.length) {
+      // Retry a failing batch a few times; if it still fails, record its rows as
+      // errors and CARRY ON (a single bad/slow batch never kills the whole run).
+      let out = null
+      for (let attempt = 0; attempt < 3 && !out; attempt++) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          out = await updateBatch({ rows: fullRows, offset, batchSize: BATCH })
+        } catch {
+          // eslint-disable-next-line no-await-in-loop
+          if (attempt < 2) await sleep(1200 * (attempt + 1))
+        }
       }
-    } catch (err) {
-      setUpdError(err.message)
-    } finally {
-      setUpdRunning(false)
+      if (!out) {
+        const slice = fullRows.slice(offset, offset + BATCH)
+        counts.errors += slice.length
+        results.push(...slice.map((r) => ({ code: nc(r['Dr. Code']), name: r['Dr. Name'] || '', ok: false, error: 'server error after retries — re-run to retry this row' })))
+        processed += slice.length
+        setUpdProg({ processed, total }); setUpdReport({ counts: { ...counts }, results: [...results] })
+        offset += BATCH
+        continue
+      }
+      for (const k in counts) counts[k] += out.counts?.[k] || 0
+      const rs = out.results || []
+      results.push(...rs)
+      for (const r of rs) if (r.ok) doneCodes.add(nc(r.code)) // success → skip on re-run
+      processed += out.processed || 0
+      setUpdProg({ processed, total: out.total ?? total })
+      setUpdReport({ counts: { ...counts }, results: [...results] })
+      setUpdDone(new Set(doneCodes)); persistUpdDone(doneCodes)
+      if (out.done || out.nextOffset == null) break
+      offset = out.nextOffset
     }
+    setUpdRunning(false)
   }
 
   // Parse + triage a chosen sheet (local upload or Google Drive), shared by both
