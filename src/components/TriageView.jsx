@@ -78,6 +78,13 @@ export default function TriageView({ live }) {
     all[sheetKey] = [...set]
     writeJSON(STORE_UPD, all)
   }
+  // Clear the "already updated" marks so EVERY update row can be re-processed
+  // (for a forced full re-run, e.g. after the sheet changed).
+  const resetUpdDone = () => {
+    const empty = new Set()
+    setUpdDone(empty); persistUpdDone(empty)
+    if (data?.update) setUpdateSelected(new Set(data.update.map((u) => u.code)))
+  }
 
   // Save heavy payload only when the sheet/result changes (i.e. on upload/clear).
   useEffect(() => {
@@ -435,6 +442,7 @@ export default function TriageView({ live }) {
             error={updError}
             onUpdate={runUpdate}
             done={updDone}
+            onReset={resetUpdDone}
           />
 
           <div className="card" style={{ padding: 18 }}>
@@ -535,7 +543,7 @@ function CreateBlock({ rows, selected, setSelected, disabled, onExport }) {
 // (covers every code across pages) and an Update button (write logic supplied
 // later). The field-by-field comparison below is a separate, untouched section.
 const UPDATE_PAGE = 20
-function UpdateBlock({ rows, selected, setSelected, disabled, running, prog, report, error, onUpdate, done = new Set() }) {
+function UpdateBlock({ rows, selected, setSelected, disabled, running, prog, report, error, onUpdate, done = new Set(), onReset }) {
   const [page, setPage] = useState(0)
   // Already-updated codes are shown blurred (✓ updated) and excluded from
   // select-all / the pending count — only the rest are (re-)updatable.
@@ -563,6 +571,16 @@ function UpdateBlock({ rows, selected, setSelected, disabled, running, prog, rep
           To update — already in UAT ({rows.length}) · <b>{selPending} selected</b>{doneCount > 0 ? ` · ${doneCount} updated` : ''}
         </span>
         <div className="filterbar__spacer" />
+        {doneCount > 0 && onReset && (
+          <button
+            className="export-btn"
+            disabled={disabled}
+            title="Clear the ✓ updated marks and re-enable every row for a full re-update"
+            onClick={() => { if (window.confirm(`Re-enable all ${rows.length} rows for updating (including the ${doneCount} already updated) and run them all again?`)) onReset() }}
+          >
+            ↻ Update all again
+          </button>
+        )}
         <button className="btn btn--ready" disabled={disabled || selPending === 0} onClick={() => onUpdate([...selected])}>
           {running ? 'Updating…' : `Update selected · ${selPending}`}
         </button>
