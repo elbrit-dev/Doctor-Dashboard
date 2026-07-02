@@ -188,21 +188,24 @@ export default function TriageView({ live }) {
     const BATCH = 40
     let offset = 0
     let processed = 0
+    // Send only THIS batch's slice each call — never the whole sheet — so the
+    // request body stays tiny (a 7k-row sheet would otherwise be a ~7MB body and
+    // blow past the serverless request limit, failing every batch).
     while (offset < fullRows.length) {
+      const slice = fullRows.slice(offset, offset + BATCH)
       // Retry a failing batch a few times; if it still fails, record its rows as
       // errors and CARRY ON (a single bad/slow batch never kills the whole run).
       let out = null
       for (let attempt = 0; attempt < 3 && !out; attempt++) {
         try {
           // eslint-disable-next-line no-await-in-loop
-          out = await updateBatch({ rows: fullRows, offset, batchSize: BATCH })
+          out = await updateBatch({ rows: slice, offset: 0, batchSize: BATCH })
         } catch {
           // eslint-disable-next-line no-await-in-loop
           if (attempt < 2) await sleep(1200 * (attempt + 1))
         }
       }
       if (!out) {
-        const slice = fullRows.slice(offset, offset + BATCH)
         counts.errors += slice.length
         results.push(...slice.map((r) => ({ code: nc(r['Dr. Code']), name: r['Dr. Name'] || '', ok: false, error: 'server error after retries — re-run to retry this row' })))
         processed += slice.length
@@ -214,12 +217,11 @@ export default function TriageView({ live }) {
       const rs = out.results || []
       results.push(...rs)
       for (const r of rs) if (r.ok) doneCodes.add(nc(r.code)) // success → skip on re-run
-      processed += out.processed || 0
-      setUpdProg({ processed, total: out.total ?? total })
+      processed += slice.length
+      setUpdProg({ processed, total })
       setUpdReport({ counts: { ...counts }, results: [...results] })
       setUpdDone(new Set(doneCodes)); persistUpdDone(doneCodes)
-      if (out.done || out.nextOffset == null) break
-      offset = out.nextOffset
+      offset += BATCH
     }
     setUpdRunning(false)
   }
@@ -263,27 +265,40 @@ export default function TriageView({ live }) {
     setRunning(true); setRunError(null); setRunProg({ processed: 0, total })
     setRunReport({ counts: { ...counts }, results, exceptions })
 
-    try {
-      let offset = 0
-      let processed = 0
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        // eslint-disable-next-line no-await-in-loop
-        const out = await processBatch({ rows: fullRows, offset, batchSize: 50 })
-        for (const k in counts) counts[k] += out.counts?.[k] || 0
-        results.push(...(out.results || []))
-        exceptions.push(...(out.exceptions || []))
-        processed += out.processed || 0
-        setRunProg({ processed, total: out.total ?? total })
-        setRunReport({ counts: { ...counts }, results: [...results], exceptions: [...exceptions] })
-        if (out.done || out.nextOffset == null) break
-        offset = out.nextOffset
+    const BATCH = 50
+    let offset = 0
+    let processed = 0
+    // Send only this batch's slice (not the whole selection) so large creates
+    // never exceed the serverless request-body limit; retry + carry on per batch.
+    while (offset < fullRows.length) {
+      const slice = fullRows.slice(offset, offset + BATCH)
+      let out = null
+      for (let attempt = 0; attempt < 3 && !out; attempt++) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          out = await processBatch({ rows: slice, offset: 0, batchSize: BATCH })
+        } catch {
+          // eslint-disable-next-line no-await-in-loop
+          if (attempt < 2) await sleep(1200 * (attempt + 1))
+        }
       }
-    } catch (err) {
-      setRunError(err.message)
-    } finally {
-      setRunning(false)
+      if (!out) {
+        counts.errors += slice.length
+        results.push(...slice.map((r) => ({ code: nc(r['Dr. Code']), op: 'create_lead', ok: false, error: 'server error after retries — re-run to retry this row' })))
+        processed += slice.length
+        setRunProg({ processed, total }); setRunReport({ counts: { ...counts }, results: [...results], exceptions: [...exceptions] })
+        offset += BATCH
+        continue
+      }
+      for (const k in counts) counts[k] += out.counts?.[k] || 0
+      results.push(...(out.results || []))
+      exceptions.push(...(out.exceptions || []))
+      processed += slice.length
+      setRunProg({ processed, total })
+      setRunReport({ counts: { ...counts }, results: [...results], exceptions: [...exceptions] })
+      offset += BATCH
     }
+    setRunning(false)
   }
 
   // Rows whose Lead was successfully created this run — fed to the Validate
