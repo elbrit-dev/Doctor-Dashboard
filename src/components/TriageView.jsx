@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { parseSheet } from '../lib/parseSheet.js'
-import { reconcileSheet, processBatch, updateBatch } from '../data/source.js'
+import { reconcileSheet, processBatch, updateBatch, getCompleted, markCompleted } from '../data/source.js'
 import { listFolderFiles, downloadFromDrive } from '../lib/googleDrive.js'
 import { IconDownload } from './icons.jsx'
 import ReconcileView from './ReconcileView.jsx'
@@ -95,6 +95,20 @@ export default function TriageView({ live }) {
 
   // Completed-file marks persist on their own key (survive Clear / new uploads).
   useEffect(() => { writeJSON(STORE_DONE, [...completed]) }, [completed])
+
+  // Merge the SHARED completed list (set by any user) so this browser shows the
+  // same ✓ Completed marks even for sheets someone else finished.
+  useEffect(() => {
+    if (!live) return
+    getCompleted().then((ids) => { if (ids.length) setCompleted((prev) => new Set([...prev, ...ids])) })
+  }, [live])
+
+  // Mark a Drive file Completed locally AND share it with every other user.
+  const markFileCompleted = (id) => {
+    if (!id) return
+    setCompleted((prev) => (prev.has(id) ? prev : new Set([...prev, id])))
+    markCompleted(id, true)
+  }
 
   const clearAll = () => {
     setData(null); setParsedRows(null); setFileName(''); setPhase('idle'); setError(null)
@@ -302,7 +316,7 @@ export default function TriageView({ live }) {
   useEffect(() => {
     if (!activeFileId || !data) return
     if (remaining.create === 0 && remaining.update === 0 && remaining.duplicates === 0) {
-      setCompleted((prev) => (prev.has(activeFileId) ? prev : new Set([...prev, activeFileId])))
+      markFileCompleted(activeFileId)
     }
   }, [activeFileId, data, remaining])
 
@@ -425,8 +439,8 @@ export default function TriageView({ live }) {
                   const next = !showFullValidate
                   setShowFullValidate(next)
                   // "Validate fully" is the last step in the workflow — running it
-                  // marks this Drive sheet ✓ Completed in the folder list.
-                  if (next && activeFileId) setCompleted((prev) => (prev.has(activeFileId) ? prev : new Set([...prev, activeFileId])))
+                  // marks this Drive sheet ✓ Completed for every user of the link.
+                  if (next) markFileCompleted(activeFileId)
                 }}
               >
                 {showFullValidate ? 'Hide validation' : 'Validate fully'}

@@ -48,6 +48,12 @@
   to = "/.netlify/functions/merge-duplicates"
   status = 200
 
+# Shared "Completed" tracking across all users (Netlify Blobs).
+[[redirects]]
+  from = "/api/completed"
+  to = "/.netlify/functions/completed"
+  status = 200
+
 # Google Drive: list the shared folder's sheets (server-side, no user login).
 [[redirects]]
   from = "/api/drive/files"

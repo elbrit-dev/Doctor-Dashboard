@@ -9,6 +9,7 @@
 //   PROXY_PORT=8787            (optional, default 8787)
 
 import 'dotenv/config'
+import { readFileSync, writeFileSync } from 'node:fs'
 import express from 'express'
 import cors from 'cors'
 import { DOCTOR_IDS } from './doctorIds.js'
@@ -211,6 +212,22 @@ app.post('/api/merge-duplicates', async (req, res) => {
     console.error('[proxy] merge failed:', err.message)
     res.status(502).json({ error: 'ERPNext request failed', detail: err.message })
   }
+})
+
+// ── Shared "Completed" tracking (dev: a JSON file; prod: Netlify Blobs) ──────
+const COMPLETED_FILE = new URL('./completed.json', import.meta.url)
+const readCompleted = () => { try { return JSON.parse(readFileSync(COMPLETED_FILE, 'utf8')) } catch { return [] } }
+const writeCompleted = (ids) => { try { writeFileSync(COMPLETED_FILE, JSON.stringify(ids)) } catch { /* ignore */ } }
+
+app.get('/api/completed', (req, res) => res.json({ ids: readCompleted(), shared: true }))
+app.post('/api/completed', (req, res) => {
+  const id = String(req.body?.id || '')
+  if (!id) return res.status(400).json({ error: 'id is required' })
+  const set = new Set(readCompleted())
+  if (req.body?.done === false) set.delete(id); else set.add(id)
+  const ids = [...set]
+  writeCompleted(ids)
+  res.json({ ids, shared: true })
 })
 
 // ── Google Drive (server-side; no per-user login) ───────────────────────────

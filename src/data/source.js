@@ -118,6 +118,26 @@ export async function mergeDuplicatesBatch({ duplicates, offset = 0, batchSize =
   return body
 }
 
+// Shared "Completed" sheet ids (visible to every user of the link).
+export async function getCompleted() {
+  try {
+    const res = await fetch('/api/completed', { headers: { Accept: 'application/json' } })
+    const body = await res.json().catch(() => ({}))
+    return Array.isArray(body.ids) ? body.ids : []
+  } catch { return [] }
+}
+
+// Mark (or unmark) a Drive file id Completed for everyone. Best-effort.
+export async function markCompleted(id, done = true) {
+  try {
+    await fetch('/api/completed', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ id, done }),
+    })
+  } catch { /* ignore — local mark still stands */ }
+}
+
 // CRM writes a review decision back to ERPNext (posts a comment on the Lead).
 // payload: { id, decision: 'ready'|'error', issues?: string[], note?: string, by?: string }
 export async function submitReview(payload) {

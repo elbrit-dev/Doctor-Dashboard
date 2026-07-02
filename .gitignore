@@ -28,3 +28,6 @@ public/*.xlsx
 public/*.xls
 public/*.csv
 *.mjs
+
+# Local shared-completed store (dev only; prod uses Netlify Blobs)
+server/completed.json
