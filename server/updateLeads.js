@@ -26,7 +26,7 @@
 // it actually needs — run concurrently, with 5xx retries. The frontend drives
 // the offset loop, so no single call risks the serverless timeout.
 
-import { buildLead, buildAddress, strip } from './transform.js'
+import { buildLead, buildAddress, strip, extractEmpId, resolveEmp } from './transform.js'
 import { fetchTerritories, makeTerritoryResolver } from './territory.js'
 import { leadCode } from './leadIndex.js'
 
@@ -198,7 +198,8 @@ export async function runUpdate({ base, authHeaders, rows, offset = 0, batchSize
   const batch = rows.slice(offset, offset + batchSize)
 
   const codes = [...new Set(batch.map((r) => strip(g(r, 'Dr. Code'))).filter(Boolean))]
-  const empCodes = [...new Set(batch.map((r) => g(r, 'Emp Code')).filter(Boolean))]
+  // Emp Code + the id embedded in the Emp Name (vacant-code fallback).
+  const empCodes = [...new Set(batch.flatMap((r) => [g(r, 'Emp Code'), extractEmpId(g(r, 'Emp Name'))].filter(Boolean)))]
   const [nameByCode, empMap, territories] = await Promise.all([
     resolveLeadNames(base, headers, codes),
     fetchEmployees(base, headers, empCodes),
@@ -233,7 +234,8 @@ export async function runUpdate({ base, authHeaders, rows, offset = 0, batchSize
     const patch = scalarPatch(desiredLead, live)
 
     // (2) role profile — append the employee's rp if missing; keep all others.
-    const emp = empMap[g(r, 'Emp Code')]
+    // Vacant Emp Code falls back to the id embedded in the Emp Name.
+    const emp = resolveEmp(r, empMap)
     const rp = emp ? (emp.role_id || emp.custom_role_profile || '').trim() : ''
     const liveRoles = Array.isArray(live.custom_role_profile) ? live.custom_role_profile : []
     const rolePresent = rp && liveRoles.some((x) => (x.role_profile_list || '').trim() === rp)

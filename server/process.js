@@ -7,7 +7,7 @@
 // ALL existing coded Leads) so re-running a batch never double-creates: a code
 // created on the previous pass now shows up as `skip`.
 
-import { transformRow } from './transform.js'
+import { transformRow, extractEmpId } from './transform.js'
 import { fetchDoctorLeads, leadCode } from './leadIndex.js'
 import { fetchTerritories, makeTerritoryResolver } from './territory.js'
 
@@ -80,7 +80,14 @@ export async function runProcess({ base, authHeaders, rows, offset = 0, batchSiz
 
   const headers = { ...authHeaders, Accept: 'application/json' }
   const batch = rows.slice(offset, offset + batchSize)
-  const empCodes = [...new Set(batch.map((r) => String(r['Emp Code'] ?? '').trim()).filter(Boolean))]
+  // Fetch employees by Emp Code AND by the id embedded in the Emp Name, so a
+  // vacant code (V01869 → "…(E01198)") resolves to the real employee.
+  const empCodes = [...new Set(batch.flatMap((r) => {
+    const out = []
+    const ec = String(r['Emp Code'] ?? '').trim(); if (ec) out.push(ec)
+    const alt = extractEmpId(r['Emp Name']); if (alt) out.push(alt)
+    return out
+  }))]
 
   const [empMap, existing, territories] = await Promise.all([
     fetchEmployees(base, headers, empCodes),

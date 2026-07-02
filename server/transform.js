@@ -28,6 +28,24 @@ const NUM_RE = /\d/
 
 export const strip = (c) => (String(c || '').replace(/^0+/, '') || '0')
 
+// A "vacant" Emp Code (e.g. V01869) has no Employee record, but the covering
+// employee's real id is embedded in the Emp Name, e.g.
+// "Vacant_Nandha Kumar C (E01198)" → E01198. Pull out the last parenthesized
+// employee id so we can fall back to it when the Emp Code itself isn't found.
+export const extractEmpId = (empName) => {
+  const all = [...String(empName || '').matchAll(/\(\s*([A-Za-z]{0,3}\d{3,})\s*\)/g)]
+  return all.length ? all[all.length - 1][1].trim() : ''
+}
+
+// Resolve a sheet row's Employee: prefer the Emp Code; if that has no Employee
+// record (vacant position), fall back to the id embedded in the Emp Name.
+export const resolveEmp = (r, empMap) => {
+  const ec = g(r, 'Emp Code')
+  if (empMap[ec]) return empMap[ec]
+  const alt = extractEmpId(g(r, 'Emp Name'))
+  return alt ? empMap[alt] : undefined
+}
+
 // ERPNext's Address doctype VALIDATES `state` against the country's official
 // list — raw sheet values like "Tamilnadu" or "Tn-Chennai" are rejected
 // (HTTP 417). So the Address state must be canonicalized. (The Lead's own
@@ -150,7 +168,7 @@ export function transformRow(r, empMap, existing, resolveTerritory) {
   if (existing.has(code)) {
     return { kind: 'skip', code, name, dr, reason: 'already_in_uat', hasAddress: !!address, address }
   }
-  const e = empMap[ec]
+  const e = resolveEmp(r, empMap) // Emp Code, or the id inside the Emp Name for vacant codes
   if (!e) return { kind: 'exception', code, dr, empcode: ec, empname: g(r, 'Emp Name'), hq: g(r, 'HQ'), reason: 'employee_not_found' }
   const rp = (e.role_id || e.custom_role_profile || '').trim()
   if (!rp) return { kind: 'exception', code, dr, empcode: ec, empname: g(r, 'Emp Name'), hq: g(r, 'HQ'), reason: 'no_role_profile' }
