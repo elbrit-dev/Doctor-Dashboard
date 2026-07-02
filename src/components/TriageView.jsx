@@ -434,6 +434,7 @@ export default function TriageView({ live }) {
             report={updReport}
             error={updError}
             onUpdate={runUpdate}
+            done={updDone}
           />
 
           <div className="card" style={{ padding: 18 }}>
@@ -534,12 +535,21 @@ function CreateBlock({ rows, selected, setSelected, disabled, onExport }) {
 // (covers every code across pages) and an Update button (write logic supplied
 // later). The field-by-field comparison below is a separate, untouched section.
 const UPDATE_PAGE = 20
-function UpdateBlock({ rows, selected, setSelected, disabled, running, prog, report, error, onUpdate }) {
+function UpdateBlock({ rows, selected, setSelected, disabled, running, prog, report, error, onUpdate, done = new Set() }) {
   const [page, setPage] = useState(0)
-  const allCodes = rows.map((r) => r.code)
-  const allOn = allCodes.length > 0 && allCodes.every((c) => selected.has(c))
-  const toggleAll = () => setSelected(() => (allOn ? new Set() : new Set(allCodes)))
+  // Already-updated codes are shown blurred (✓ updated) and excluded from
+  // select-all / the pending count — only the rest are (re-)updatable.
+  const pendingCodes = rows.filter((r) => !done.has(r.code)).map((r) => r.code)
+  const doneCount = rows.length - pendingCodes.length
+  const allOn = pendingCodes.length > 0 && pendingCodes.every((c) => selected.has(c))
+  const toggleAll = () => setSelected((prev) => {
+    const n = new Set(prev)
+    if (allOn) pendingCodes.forEach((c) => n.delete(c))
+    else pendingCodes.forEach((c) => n.add(c))
+    return n
+  })
   const toggle = (code) => setSelected((prev) => { const n = new Set(prev); n.has(code) ? n.delete(code) : n.add(code); return n })
+  const selPending = [...selected].filter((c) => !done.has(c)).length
   const pages = Math.max(1, Math.ceil(rows.length / UPDATE_PAGE))
   const p = Math.min(page, pages - 1)
   const pageRows = rows.slice(p * UPDATE_PAGE, p * UPDATE_PAGE + UPDATE_PAGE)
@@ -550,11 +560,11 @@ function UpdateBlock({ rows, selected, setSelected, disabled, running, prog, rep
     <div className="card">
       <div className="toolbar">
         <span className="section-label" style={{ margin: 0 }}>
-          To update — already in UAT ({rows.length}) · <b>{selected.size} selected</b>
+          To update — already in UAT ({rows.length}) · <b>{selPending} selected</b>{doneCount > 0 ? ` · ${doneCount} updated` : ''}
         </span>
         <div className="filterbar__spacer" />
-        <button className="btn btn--ready" disabled={disabled || selected.size === 0} onClick={() => onUpdate([...selected])}>
-          {running ? 'Updating…' : `Update selected · ${selected.size}`}
+        <button className="btn btn--ready" disabled={disabled || selPending === 0} onClick={() => onUpdate([...selected])}>
+          {running ? 'Updating…' : `Update selected · ${selPending}`}
         </button>
       </div>
       <p className="card__hint" style={{ padding: '0 4px 8px', margin: 0 }}>
@@ -615,22 +625,29 @@ function UpdateBlock({ rows, selected, setSelected, disabled, running, prog, rep
             <table className="dt">
               <thead>
                 <tr>
-                  <th style={{ width: 36 }}>
-                    <input type="checkbox" checked={allOn} disabled={disabled} onChange={toggleAll} title="Select all" />
+                  <th style={{ width: 96 }}>
+                    <input type="checkbox" checked={allOn} disabled={disabled} onChange={toggleAll} title="Select all not-yet-updated" />
                   </th>
                   <th>Dr Code</th><th>Doctor</th><th>Emp Code</th><th>HQ</th>
                 </tr>
               </thead>
               <tbody>
-                {pageRows.map((r, i) => (
-                  <tr key={r.code + i} className={selected.has(r.code) ? 'is-selected' : ''}>
-                    <td><input type="checkbox" checked={selected.has(r.code)} disabled={disabled} onChange={() => toggle(r.code)} /></td>
-                    <td className="code">{r.code}</td>
-                    <td>{r.name || '—'}</td>
-                    <td>{r.empCode || '—'}</td>
-                    <td>{r.hq || '—'}</td>
-                  </tr>
-                ))}
+                {pageRows.map((r, i) => {
+                  const isDone = done.has(r.code)
+                  return (
+                    <tr key={r.code + i} className={!isDone && selected.has(r.code) ? 'is-selected' : ''} style={isDone ? { opacity: 0.5 } : undefined}>
+                      <td>
+                        {isDone
+                          ? <span className="review-chip ready" title="Already updated in a previous run">✓ updated</span>
+                          : <input type="checkbox" checked={selected.has(r.code)} disabled={disabled} onChange={() => toggle(r.code)} />}
+                      </td>
+                      <td className="code">{r.code}</td>
+                      <td>{r.name || '—'}</td>
+                      <td>{r.empCode || '—'}</td>
+                      <td>{r.hq || '—'}</td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

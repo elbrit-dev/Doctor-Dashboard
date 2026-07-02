@@ -62,7 +62,7 @@ export const FIELDS = [
   { key: 'cpin', label: 'Clinic Pincode', sheet: 'Clinic Info - Pincode', kind: 'address', pool: 'pincode', norm: pincode },
   { key: 'raddr', label: 'Resi. Address', sheet: ['Residence Info - Address 1', 'Residence Info - Address 2', 'Residence Info - Address 3'], kind: 'address', pool: 'text', norm: text },
   { key: 'rcity', label: 'Resi. City', sheet: 'Residence Info - City', kind: 'address', pool: 'city', norm: text },
-  { key: 'rpin', label: 'Resi. Pincode', sheet: 'Residence Info - Pincode', kind: 'address', pool: 'pincode', norm: pincode },
+  // Residential pincode is intentionally NOT validated (per CRM: too noisy).
 ]
 
 // Read a field's sheet value, joining multiple columns (e.g. the 3 address lines)
