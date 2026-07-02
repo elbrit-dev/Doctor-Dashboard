@@ -24,6 +24,7 @@ const ALIAS_GROUPS = [
   ['vizag', 'visakhapatnam', 'vishakhapatnam', 'vizagapatnam'],
   ['varanasi', 'banaras', 'benares'],
   ['tirunelveli', 'nellai'],
+  ['noida', 'greaternoida', 'grnoida'],
 ]
 const ALIAS = new Map()
 for (const grp of ALIAS_GROUPS) for (const v of grp) ALIAS.set(v, grp[0])
