@@ -4,6 +4,12 @@ import { IconDownload } from './icons.jsx'
 
 const DUP_PAGE = 20 // same paginated 20/page layout as the "To update" table
 
+// Merged duplicate codes persist across refreshes / re-scans, so a set that's
+// been merged never shows the Merge button again.
+const STORE_MERGED = 'dvd-dup-merged-v1'
+const readMerged = () => { try { return JSON.parse(localStorage.getItem(STORE_MERGED) || '[]') } catch { return [] } }
+const writeMerged = (arr) => { try { localStorage.setItem(STORE_MERGED, JSON.stringify(arr)) } catch { /* ignore */ } }
+
 // Duplicate IDs (same code stored as clean DR-<code> + padded DR-000<code>).
 // Merge each padded Lead's addresses onto the clean one, then delete the padded
 // Lead. Bulk "Merge & delete" drives the batched /api/merge-duplicates loop; a
@@ -13,13 +19,17 @@ export default function DuplicatesPanel({ duplicates, onExport, onMergedChange }
   const [prog, setProg] = useState(null) // { processed, total }
   const [report, setReport] = useState(null) // { counts }
   const [error, setError] = useState(null)
-  const [done, setDone] = useState(() => new Set()) // codes fully merged
+  const [done, setDone] = useState(() => new Set(readMerged())) // codes fully merged (persisted)
   const [page, setPage] = useState(0)
 
   const pending = duplicates.filter((d) => !done.has(d.code))
 
-  // Report merged-set count up so the parent's "Duplicate IDs" KPI can shrink.
-  useEffect(() => { onMergedChange?.(done.size) }, [done]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Report merged-set count (for THIS sheet) up so the parent's "Duplicate IDs"
+  // KPI can shrink, and persist the merged codes so they never reappear.
+  useEffect(() => {
+    writeMerged([...done])
+    onMergedChange?.(duplicates.filter((d) => done.has(d.code)).length)
+  }, [done, duplicates]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const applyResults = (results) => {
     const nextDone = results.filter((r) => r && r.ok).map((r) => r.code)
@@ -88,7 +98,7 @@ export default function DuplicatesPanel({ duplicates, onExport, onMergedChange }
     <div className="card">
       <div className="toolbar">
         <span className="section-label" style={{ margin: 0 }}>
-          Duplicate IDs in UAT ({duplicates.length}){done.size > 0 && ` · ${done.size} merged`}
+          Duplicate IDs in UAT ({duplicates.length}){pending.length < duplicates.length && ` · ${duplicates.length - pending.length} merged`}
         </span>
         <div className="filterbar__spacer" />
         {duplicates.length > 0 && (
