@@ -28,6 +28,35 @@ const NUM_RE = /\d/
 
 export const strip = (c) => (String(c || '').replace(/^0+/, '') || '0')
 
+// ERPNext link fields reject values not present in the linked doctype with
+// "Could not find <Label>: <value>". Map those labels back to the Lead payload
+// keys so a failed write can drop just the offending field(s) and retry, instead
+// of losing the whole row.
+const LINK_LABEL_TO_FIELD = {
+  'territory (hq)': 'territory', territory: 'territory',
+  specialty: 'custom_specialty', speciality: 'custom_specialty',
+  qualification: 'custom_qualification',
+  category: 'custom_category',
+}
+export function invalidLinkFields(errText) {
+  const out = new Set()
+  const s = String(errText || '')
+  // "Could not find Specialty: GYNAEC, Qualification: DGO" — one prefix, then
+  // comma-separated "Label: value" pairs. Grab the segment, split, take labels.
+  const seg = s.match(/could not find\s+(.+)/i)
+  const part = seg ? seg[1] : ''
+  for (const piece of part.split(',')) {
+    const label = (piece.split(':')[0] || '').trim().toLowerCase()
+    const f = LINK_LABEL_TO_FIELD[label]
+    if (f) out.add(f)
+  }
+  return [...out]
+}
+
+// ERPNext Address text fields cap at 140 chars — trim so an over-long line
+// doesn't error/truncate on save.
+const cut140 = (s) => String(s || '').slice(0, 140)
+
 // A "vacant" Emp Code (e.g. V01869) has no Employee record, but the covering
 // employee's real id is embedded in the Emp Name, e.g.
 // "Vacant_Nandha Kumar C (E01198)" → E01198. Pull out the last parenthesized
@@ -127,7 +156,7 @@ export function buildAddress(r, name, dr) {
   // otherwise the 3rd line (e.g. "ROAD" of "MAIN ROAD") is silently dropped.
   const line2 = [a.line2, a.line3].map((s) => String(s || '').trim()).filter(Boolean).join(', ')
   return {
-    address_title: a.title, address_type: a.type, address_line1: a.line1, address_line2: line2,
+    address_title: cut140(a.title), address_type: a.type, address_line1: cut140(a.line1), address_line2: cut140(line2),
     city: g(r, 'Dr. City (Clinic)'), state: canonState(g(r, 'Clinic State'), g(r, 'State')), pincode: g(r, 'Clinic Info - Pincode'),
     country: CFG.COUNTRY, links: [{ link_doctype: 'Lead', link_name: name }],
   }

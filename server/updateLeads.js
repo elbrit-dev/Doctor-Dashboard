@@ -26,7 +26,7 @@
 // it actually needs — run concurrently, with 5xx retries. The frontend drives
 // the offset loop, so no single call risks the serverless timeout.
 
-import { buildLead, buildAddress, strip, extractEmpId, resolveEmp } from './transform.js'
+import { buildLead, buildAddress, strip, extractEmpId, resolveEmp, invalidLinkFields } from './transform.js'
 import { fetchTerritories, makeTerritoryResolver } from './territory.js'
 import { leadCode } from './leadIndex.js'
 
@@ -266,18 +266,32 @@ export async function runUpdate({ base, authHeaders, rows, offset = 0, batchSize
       return
     }
 
-    let ok = true, error
+    let ok = true, error, droppedLinks
     if (Object.keys(patch).length > 0) {
-      const res = await send('PUT', `${base}/api/resource/Lead/${encodeURIComponent(name)}`, headers, patch)
+      const url = `${base}/api/resource/Lead/${encodeURIComponent(name)}`
+      let res = await send('PUT', url, headers, patch)
+      // Invalid link value (e.g. Specialty "GYNAEC", Qualification "DGO")? Drop
+      // just those fields and retry, so the rest of the row still updates.
+      if (!res.ok && /could not find/i.test(res.error || '')) {
+        const bad = invalidLinkFields(res.error).filter((f) => f in patch)
+        if (bad.length) {
+          const reduced = { ...patch }; bad.forEach((f) => delete reduced[f])
+          res = Object.keys(reduced).length ? await send('PUT', url, headers, reduced) : { ok: true }
+          if (res.ok) droppedLinks = bad
+        }
+      }
       if (res.ok) { counts.updated++; if (roleAdded) counts.roleAdded++ }
       else { ok = false; error = res.error; counts.errors++ }
     }
     if (ok && needAddress) {
       const ar = await send('POST', `${base}/api/resource/Address`, headers, desiredAddr)
       if (ar.ok) counts.addressAdded++
+      // A duplicate auto-name means an equivalent address already exists — not a
+      // real failure, so don't fail the row over it.
+      else if (/duplicate entry/i.test(ar.error || '')) { /* skip, already present */ }
       else { ok = false; error = ar.error; counts.errors++ }
     }
-    results.push({ code, name, ok, error, leadFields, roleAdded, addressAdded: needAddress })
+    results.push({ code, name, ok, error, leadFields, roleAdded, addressAdded: needAddress, droppedLinks })
   })
 
   const done = offset + batchSize >= rows.length

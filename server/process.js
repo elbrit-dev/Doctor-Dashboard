@@ -7,7 +7,7 @@
 // ALL existing coded Leads) so re-running a batch never double-creates: a code
 // created on the previous pass now shows up as `skip`.
 
-import { transformRow, extractEmpId } from './transform.js'
+import { transformRow, extractEmpId, invalidLinkFields } from './transform.js'
 import { fetchDoctorLeads, leadCode } from './leadIndex.js'
 import { fetchTerritories, makeTerritoryResolver } from './territory.js'
 
@@ -110,14 +110,29 @@ export async function runProcess({ base, authHeaders, rows, offset = 0, batchSiz
   }
 
   await mapLimit(toCreate, 5, async (t) => {
-    const res = await send('POST', `${base}/api/resource/Lead`, headers, t.lead)
-    results.push({ code: t.code, op: 'create_lead', ok: res.ok, status: res.status, error: res.error })
+    let res = await send('POST', `${base}/api/resource/Lead`, headers, t.lead)
+    // Invalid link value (Specialty/Qualification/Category)? Drop just those and
+    // retry so the Lead is still created. Territory is left in — an unmatched HQ
+    // stays a visible error so it can be added as an alias.
+    if (!res.ok && /could not find/i.test(res.error || '')) {
+      const bad = invalidLinkFields(res.error).filter((f) => f !== 'territory' && f in t.lead)
+      if (bad.length) {
+        const reduced = { ...t.lead }; bad.forEach((f) => delete reduced[f])
+        res = await send('POST', `${base}/api/resource/Lead`, headers, reduced)
+        if (res.ok) res.droppedLinks = bad
+      }
+    }
+    results.push({ code: t.code, op: 'create_lead', ok: res.ok, status: res.status, error: res.error, droppedLinks: res.droppedLinks })
     if (res.ok) {
       counts.created++
       if (t.hasAddress && t.address) {
         const ar = await send('POST', `${base}/api/resource/Address`, headers, t.address)
-        results.push({ code: t.code, op: 'create_address', ok: ar.ok, status: ar.status, error: ar.error })
-        if (!ar.ok) counts.errors++
+        // Duplicate address auto-name = an equivalent address already exists.
+        if (!ar.ok && /duplicate entry/i.test(ar.error || '')) { /* skip, not an error */ }
+        else {
+          results.push({ code: t.code, op: 'create_address', ok: ar.ok, status: ar.status, error: ar.error })
+          if (!ar.ok) counts.errors++
+        }
       }
     } else {
       counts.errors++
