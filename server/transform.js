@@ -167,11 +167,17 @@ export function buildAddress(r, name, dr) {
 // "HQ-<HQ>" when the caller has resolved the HQ to an existing UAT Territory
 // (see server/territory.js) — this avoids the LinkValidationError a wrong/
 // misspelled territory would otherwise trigger.
-export function buildLead(r, code, name, dr, rp, territory) {
+// `opts` carries resolved Link values: territory (an existing Territory),
+// specialty / qualification (existing entries, or '' to omit when the sheet value
+// isn't a valid link — passing '' drops the field so the write doesn't 417).
+export function buildLead(r, code, name, dr, rp, opts = {}) {
+  const { territory, specialty, qualification } = opts
   const mob = String(g(r, 'Mobile No.') || '').replace(/\D/g, '')
+  const spec = specialty !== undefined ? specialty : g(r, 'Speciality')
+  const qual = qualification !== undefined ? qualification : g(r, 'Qualification')
   const lead = {
     name, salutation: 'Dr', first_name: dr, custom_doctor_code: code,
-    custom_specialty: g(r, 'Speciality'), custom_qualification: g(r, 'Qualification'), custom_category: (g(r, 'Category') || undefined),
+    custom_specialty: (spec || undefined), custom_qualification: (qual || undefined), custom_category: (g(r, 'Category') || undefined),
     custom_category1: (g(r, 'Category 1') || undefined), custom_category2: (g(r, 'Category 2') || undefined), custom_category3: (g(r, 'Category 3') || undefined),
     mobile_no: (mob || undefined),
     territory: territory || ('HQ-' + g(r, 'HQ')), state: g(r, 'State'), city: g(r, 'Dr. City (Clinic)'), country: CFG.COUNTRY,
@@ -190,7 +196,7 @@ export function buildLead(r, code, name, dr, rp, territory) {
 //   - code already in UAT       → kind 'skip'  (no action; reported only)
 //   - employee/role missing     → kind 'exception'
 //   - otherwise                 → kind 'create' (carries `lead` + `address`)
-export function transformRow(r, empMap, existing, resolveTerritory) {
+export function transformRow(r, empMap, existing, resolveTerritory, resolveSpecialty, resolveQualification) {
   const code = strip(g(r, 'Dr. Code')); const name = 'DR-' + code; const dr = g(r, 'Dr. Name'); const ec = g(r, 'Emp Code')
   const address = buildAddress(r, name, dr)
 
@@ -202,9 +208,11 @@ export function transformRow(r, empMap, existing, resolveTerritory) {
   const rp = (e.role_id || e.custom_role_profile || '').trim()
   if (!rp) return { kind: 'exception', code, dr, empcode: ec, empname: g(r, 'Emp Name'), hq: g(r, 'HQ'), reason: 'no_role_profile' }
 
-  // Map the sheet HQ onto an existing Territory (spelling/prefix tolerant).
+  // Map the sheet HQ / Speciality / Qualification onto existing Link values.
   const territory = resolveTerritory ? resolveTerritory(g(r, 'HQ')) : null
-  const lead = buildLead(r, code, name, dr, rp, territory)
+  const specialty = resolveSpecialty ? (resolveSpecialty(g(r, 'Speciality')) || '') : undefined
+  const qualification = resolveQualification ? (resolveQualification(g(r, 'Qualification')) || '') : undefined
+  const lead = buildLead(r, code, name, dr, rp, { territory, specialty, qualification })
   lead.custom_address_created = address ? 1 : 0
   return { kind: 'create', code, name, hasAddress: !!address, lead, address }
 }

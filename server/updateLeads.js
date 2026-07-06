@@ -27,7 +27,8 @@
 // the offset loop, so no single call risks the serverless timeout.
 
 import { buildLead, buildAddress, strip, extractEmpId, resolveEmp, invalidLinkFields } from './transform.js'
-import { fetchTerritories, makeTerritoryResolver } from './territory.js'
+import { fetchTerritories, makeTerritoryResolver, fetchDoctypeNames } from './territory.js'
+import { makeTokenResolver } from './hqMatch.js'
 import { leadCode } from './leadIndex.js'
 
 // ---- normalizers (kept in step with src/lib/reconcile.js) -------------------
@@ -37,7 +38,7 @@ const hqNorm = (v) => text(v).replace(/^hq[-\s]*/i, '')
 const stateNorm = (v) => text(v).replace(/[^a-z0-9]/g, '')
 const phoneNorm = (v) => { const d = String(v ?? '').replace(/\D/g, ''); return d.length >= 10 ? d.slice(-10) : '' }
 const isBlank = (v) => v == null || String(v).trim() === ''
-const NUM_TOL = 1e-4
+const NUM_TOL = 1e-3 // ~100m — don't rewrite geo when the sheet is only a rounding apart
 
 // Full-address identity key: line1 + line2 + city + pincode (normalized). Two
 // addresses are "the same" only when ALL of these match; any difference makes
@@ -200,12 +201,16 @@ export async function runUpdate({ base, authHeaders, rows, offset = 0, batchSize
   const codes = [...new Set(batch.map((r) => strip(g(r, 'Dr. Code'))).filter(Boolean))]
   // Emp Code + the id embedded in the Emp Name (vacant-code fallback).
   const empCodes = [...new Set(batch.flatMap((r) => [g(r, 'Emp Code'), extractEmpId(g(r, 'Emp Name'))].filter(Boolean)))]
-  const [nameByCode, empMap, territories] = await Promise.all([
+  const [nameByCode, empMap, territories, specialties, qualifications] = await Promise.all([
     resolveLeadNames(base, headers, codes),
     fetchEmployees(base, headers, empCodes),
     fetchTerritories(base, headers),
+    fetchDoctypeNames(base, headers, 'Specialty'),
+    fetchDoctypeNames(base, headers, 'Doctor Qualification'),
   ])
   const resolveTerritory = makeTerritoryResolver(territories)
+  const resolveSpecialty = makeTokenResolver(specialties)
+  const resolveQualification = makeTokenResolver(qualifications)
 
   const counts = { updated: 0, unchanged: 0, addressAdded: 0, roleAdded: 0, notFound: 0, errors: 0 }
   const results = []
@@ -217,9 +222,15 @@ export async function runUpdate({ base, authHeaders, rows, offset = 0, batchSize
     if (!code) return
     if (!name) { counts.notFound++; results.push({ code, ok: false, error: 'not_in_uat' }); return }
 
-    // Desired bodies from the SAME create builders (HQ resolved to a real Territory).
+    // Desired bodies from the SAME create builders (Link fields resolved to real
+    // Territory / Specialty / Doctor Qualification values; unresolved ones are
+    // dropped so the write doesn't 417).
     const resolvedTerr = resolveTerritory(g(r, 'HQ'))
-    const desiredLead = buildLead(r, code, name, dr, '', resolvedTerr)
+    const desiredLead = buildLead(r, code, name, dr, '', {
+      territory: resolvedTerr,
+      specialty: resolveSpecialty(g(r, 'Speciality')) || '',
+      qualification: resolveQualification(g(r, 'Qualification')) || '',
+    })
     // If the HQ can't be confidently matched, leave UAT's territory untouched
     // rather than trying to write an invalid one (which would just error).
     if (!resolvedTerr) desiredLead.territory = ''

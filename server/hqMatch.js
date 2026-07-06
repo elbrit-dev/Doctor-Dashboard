@@ -67,6 +67,46 @@ export function soundex(s) {
   return (out + '000').slice(0, 4)
 }
 
+// ── Generic coded-value matching (Specialty, Qualification) ──────────────────
+// Like the HQ match but without the HQ-prefix/alias handling: exact → unique
+// containment (e.g. "DGO" ⊂ "MD.DGO", "GYNAE" ⊂ "GYNAEC") → pronunciation →
+// near spelling.
+export const normToken = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+
+export function sameToken(a, b) {
+  const ka = normToken(a), kb = normToken(b)
+  if (!ka || !kb) return false
+  if (ka === kb) return true
+  if (ka.length >= 3 && kb.length >= 3 && (ka.includes(kb) || kb.includes(ka))) return true
+  if (soundex(ka) === soundex(kb)) return true
+  return lev(ka, kb) <= Math.max(1, Math.floor(Math.max(ka.length, kb.length) * 0.2))
+}
+
+// Resolve a sheet value to the best entry in `names` (a link doctype's values),
+// or null when nothing matches confidently. Used to turn "GYNAEC" → "GYNAE" and
+// "DGO" → "MD.DGO" before writing, so Link fields don't reject the value.
+export function makeTokenResolver(names) {
+  const list = (names || []).filter(Boolean)
+  return (v) => {
+    const kv = normToken(v)
+    if (!kv) return null
+    for (const n of list) if (normToken(n) === kv) return n // exact / normalized
+    // unique containment
+    const contains = list.filter((n) => { const kn = normToken(n); return kn.length >= 3 && kv.length >= 3 && (kn.includes(kv) || kv.includes(kn)) })
+    if (contains.length === 1) return contains[0]
+    // unique closest by pronunciation / spelling
+    let best = null, bestD = Infinity, tie = false
+    for (const n of list) {
+      const kn = normToken(n)
+      let d = lev(kv, kn)
+      if (soundex(kv) === soundex(kn)) d = Math.min(d, 1)
+      if (d < bestD) { bestD = d; best = n; tie = false } else if (d === bestD) tie = true
+    }
+    if (best && bestD <= Math.max(1, Math.floor(kv.length * 0.34)) && !tie) return best
+    return null
+  }
+}
+
 // Are two HQ / territory values the same place? exact/alias → pronunciation →
 // tight spelling. Used by the validation to avoid false mismatches.
 export function sameHq(a, b) {

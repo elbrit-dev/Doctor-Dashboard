@@ -16,8 +16,9 @@
 
 import { normHq as norm, lev, soundex } from './hqMatch.js'
 
-export async function fetchTerritories(base, headers) {
-  const url = `${base}/api/resource/Territory?fields=${encodeURIComponent('["name"]')}&limit_page_length=0`
+// Fetch all the `name` values of a doctype (a link field's allowed values).
+export async function fetchDoctypeNames(base, headers, doctype) {
+  const url = `${base}/api/resource/${encodeURIComponent(doctype)}?fields=${encodeURIComponent('["name"]')}&limit_page_length=0`
   try {
     const r = await fetch(url, { headers })
     if (!r.ok) return []
@@ -25,6 +26,8 @@ export async function fetchTerritories(base, headers) {
     return (j.data || []).map((t) => t.name).filter(Boolean)
   } catch { return [] }
 }
+
+export const fetchTerritories = (base, headers) => fetchDoctypeNames(base, headers, 'Territory')
 
 // Build a resolver over the existing territory names. resolve(hq) → an existing
 // territory name, or null when nothing matches confidently. Order of confidence:

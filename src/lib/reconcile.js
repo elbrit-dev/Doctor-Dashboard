@@ -12,7 +12,7 @@
 // Shared with the server-side writer so the validation agrees with what gets
 // written: "Nellur" (sheet) and "HQ-Nellore" (ERPNext) are the SAME HQ. lev +
 // soundex also power spelling-tolerant address-word matching below.
-import { sameHq, lev, soundex } from '../../server/hqMatch.js'
+import { sameHq, sameToken, lev, soundex } from '../../server/hqMatch.js'
 
 // ---- normalizers ------------------------------------------------------------
 const text = (v) => (v == null ? '' : String(v).trim().replace(/\s+/g, ' ').toLowerCase())
@@ -38,8 +38,8 @@ const isBlank = (s) => s === '' || s == null
 // `erp` reads from the mapped doctor object returned by the proxy.
 export const FIELDS = [
   { key: 'name', label: 'Name', sheet: 'Dr. Name', erp: (d) => d.firstName || d.leadName, norm: name },
-  { key: 'qualification', label: 'Qualification', sheet: 'Qualification', erp: (d) => d.qualification, norm: text },
-  { key: 'specialty', label: 'Speciality', sheet: 'Speciality', erp: (d) => d.specialty, norm: text },
+  { key: 'qualification', label: 'Qualification', sheet: 'Qualification', erp: (d) => d.qualification, norm: text, eq: sameToken },
+  { key: 'specialty', label: 'Speciality', sheet: 'Speciality', erp: (d) => d.specialty, norm: text, eq: sameToken },
   { key: 'category', label: 'Category', sheet: 'Category', erp: (d) => d.category, norm: text },
   { key: 'category1', label: 'Category 1', sheet: 'Category 1', erp: (d) => d.category1, norm: text },
   { key: 'category2', label: 'Category 2', sheet: 'Category 2', erp: (d) => d.category2, norm: text },
@@ -71,7 +71,9 @@ const sheetValue = (raw, key) => Array.isArray(key)
   ? key.map((k) => raw[k]).filter((v) => v != null && String(v).trim() !== '').join(' ')
   : raw[key]
 
-const NUM_TOL = 1e-4
+// Lat/long: ~1e-3 ≈ 100 m — treat near-identical coordinates (precision/rounding
+// differences like 77.58327 vs 77.5829452) as a match, not a mismatch.
+const NUM_TOL = 1e-3
 
 function compareField(field, sheetRaw, erpRaw) {
   if (field.norm === 'num') {

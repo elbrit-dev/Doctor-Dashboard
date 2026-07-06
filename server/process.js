@@ -9,7 +9,8 @@
 
 import { transformRow, extractEmpId, invalidLinkFields } from './transform.js'
 import { fetchDoctorLeads, leadCode } from './leadIndex.js'
-import { fetchTerritories, makeTerritoryResolver } from './territory.js'
+import { fetchTerritories, makeTerritoryResolver, fetchDoctypeNames } from './territory.js'
+import { makeTokenResolver } from './hqMatch.js'
 
 // ---- ERPNext reads ----------------------------------------------------------
 // GET that surfaces the ERPNext error body (Frappe returns the real reason —
@@ -89,14 +90,18 @@ export async function runProcess({ base, authHeaders, rows, offset = 0, batchSiz
     return out
   }))]
 
-  const [empMap, existing, territories] = await Promise.all([
+  const [empMap, existing, territories, specialties, qualifications] = await Promise.all([
     fetchEmployees(base, headers, empCodes),
     fetchExistingCodes(base, headers),
     fetchTerritories(base, headers),
+    fetchDoctypeNames(base, headers, 'Specialty'),
+    fetchDoctypeNames(base, headers, 'Doctor Qualification'),
   ])
   const resolveTerritory = makeTerritoryResolver(territories)
+  const resolveSpecialty = makeTokenResolver(specialties)
+  const resolveQualification = makeTokenResolver(qualifications)
 
-  const transformed = batch.map((r) => transformRow(r, empMap, existing.set, resolveTerritory))
+  const transformed = batch.map((r) => transformRow(r, empMap, existing.set, resolveTerritory, resolveSpecialty, resolveQualification))
 
   const counts = { created: 0, skipped: 0, exceptions: 0, errors: 0 }
   const results = []
