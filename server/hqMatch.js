@@ -91,9 +91,13 @@ export function makeTokenResolver(names) {
     const kv = normToken(v)
     if (!kv) return null
     for (const n of list) if (normToken(n) === kv) return n // exact / normalized
-    // unique containment
-    const contains = list.filter((n) => { const kn = normToken(n); return kn.length >= 3 && kv.length >= 3 && (kn.includes(kv) || kv.includes(kn)) })
-    if (contains.length === 1) return contains[0]
+    // containment — the sheet token is part of (or contains) a valid value, e.g.
+    // "DGO" ⊂ "MD.DGO"/"MBBS.DGO", "GYNAE" ⊂ "GYNAEC". When several match, pick the
+    // SHORTEST (closest to the token) so it's deterministic (DGO → MD.DGO).
+    const contains = list
+      .filter((n) => { const kn = normToken(n); return kn.length >= 3 && kv.length >= 3 && (kn.includes(kv) || kv.includes(kn)) })
+      .sort((a, b) => normToken(a).length - normToken(b).length)
+    if (contains.length) return contains[0]
     // unique closest by pronunciation / spelling
     let best = null, bestD = Infinity, tie = false
     for (const n of list) {
