@@ -117,7 +117,9 @@ export function sameHq(a, b) {
   const ka = normHq(a), kb = normHq(b)
   if (!ka || !kb) return false
   if (ka === kb) return true
-  if (soundex(ka) === soundex(kb)) return true
-  const thresh = Math.max(1, Math.floor(Math.max(ka.length, kb.length) * 0.2))
-  return lev(ka, kb) <= thresh
+  const maxlen = Math.max(ka.length, kb.length)
+  // Same pronunciation only counts when also spelling-close, so Tumkur↔Tanjore
+  // (same Soundex) doesn't falsely match while Bengaluru↔Bangalore still does.
+  if (soundex(ka) === soundex(kb) && lev(ka, kb) <= Math.max(2, Math.floor(maxlen * 0.4))) return true
+  return lev(ka, kb) <= Math.max(1, Math.floor(maxlen * 0.2))
 }

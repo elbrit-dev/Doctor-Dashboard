@@ -98,11 +98,12 @@ export function makeTerritoryResolver(names) {
     const spellHit = closest(k, keys, Math.max(1, Math.floor(k.length * 0.2)))
     if (spellHit) return byNorm.get(spellHit)
 
-    // (3) same pronunciation — unique Soundex match, tie-broken by edit distance
+    // (3) same pronunciation — but ALSO within a reasonable edit distance, so
+    // unrelated names that merely share a Soundex code (Tumkur vs Tanjore, both
+    // T526) don't get falsely matched. Bengaluru↔Bangalore (lev 3) still passes.
     const cands = phonetic.get(soundex(k))
     if (cands && cands.size) {
-      if (cands.size === 1) return byNorm.get([...cands][0])
-      const phonHit = closest(k, cands, Infinity) // pick the closest same-sounding one
+      const phonHit = closest(k, cands, Math.max(2, Math.floor(k.length * 0.4)))
       if (phonHit) return byNorm.get(phonHit)
     }
     return null
