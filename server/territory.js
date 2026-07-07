@@ -29,6 +29,35 @@ export async function fetchDoctypeNames(base, headers, doctype) {
 
 export const fetchTerritories = (base, headers) => fetchDoctypeNames(base, headers, 'Territory')
 
+// Ensure each value exists in `doctype` AS-IS, creating any that are missing, and
+// return a map { rawValue -> exact link name }. Used for Qualification, where the
+// sheet's value must go in verbatim (DGO ≠ MD.DGO ≠ MBBS.DGO). The doctype
+// auto-names new rows with a random code, so we create then rename to the value.
+export async function ensureLinkValues(base, headers, doctype, fieldname, values, existing) {
+  const byLower = new Map((existing || []).map((n) => [String(n).toLowerCase(), n]))
+  const map = {}
+  const post = (path, body) => fetch(`${base}${path}`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  for (const raw of values) {
+    const v = String(raw || '').trim()
+    if (!v || !/[a-z]/i.test(v)) continue // skip empty / non-alphabetic junk
+    const lower = v.toLowerCase()
+    if (byLower.has(lower)) { map[v] = byLower.get(lower); continue }
+    try {
+      const cr = await post(`/api/resource/${encodeURIComponent(doctype)}`, { [fieldname]: v })
+      if (!cr.ok) continue
+      const hash = (await cr.json())?.data?.name
+      if (!hash) continue
+      if (hash !== v) {
+        // rename the random-code doc to the exact value so the Link name is clean
+        await post('/api/method/frappe.client.rename_doc', { doctype, old_name: hash, new_name: v }).catch(() => {})
+      }
+      byLower.set(lower, v)
+      map[v] = v
+    } catch { /* leave unmapped → row skips this field */ }
+  }
+  return map
+}
+
 // Build a resolver over the existing territory names. resolve(hq) → an existing
 // territory name, or null when nothing matches confidently. Order of confidence:
 //   1. exact after normalization (prefix / spacing / case / known alias)

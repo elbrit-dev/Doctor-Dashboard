@@ -38,7 +38,9 @@ const isBlank = (s) => s === '' || s == null
 // `erp` reads from the mapped doctor object returned by the proxy.
 export const FIELDS = [
   { key: 'name', label: 'Name', sheet: 'Dr. Name', erp: (d) => d.firstName || d.leadName, norm: name },
-  { key: 'qualification', label: 'Qualification', sheet: 'Qualification', erp: (d) => d.qualification, norm: text, eq: sameToken },
+  // Qualification is written verbatim (DGO ≠ MD.DGO ≠ MBBS.DGO) → compare exactly.
+  { key: 'qualification', label: 'Qualification', sheet: 'Qualification', erp: (d) => d.qualification, norm: text },
+  // Speciality is matched to a controlled list (GYNAEC → GYNAE) → tolerant compare.
   { key: 'specialty', label: 'Speciality', sheet: 'Speciality', erp: (d) => d.specialty, norm: text, eq: sameToken },
   { key: 'category', label: 'Category', sheet: 'Category', erp: (d) => d.category, norm: text },
   { key: 'category1', label: 'Category 1', sheet: 'Category 1', erp: (d) => d.category1, norm: text },

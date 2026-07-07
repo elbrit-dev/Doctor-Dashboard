@@ -27,7 +27,7 @@
 // the offset loop, so no single call risks the serverless timeout.
 
 import { buildLead, buildAddress, strip, extractEmpId, resolveEmp, invalidLinkFields } from './transform.js'
-import { fetchTerritories, makeTerritoryResolver, fetchDoctypeNames } from './territory.js'
+import { fetchTerritories, makeTerritoryResolver, fetchDoctypeNames, ensureLinkValues } from './territory.js'
 import { makeTokenResolver } from './hqMatch.js'
 import { leadCode } from './leadIndex.js'
 
@@ -210,7 +210,10 @@ export async function runUpdate({ base, authHeaders, rows, offset = 0, batchSize
   ])
   const resolveTerritory = makeTerritoryResolver(territories)
   const resolveSpecialty = makeTokenResolver(specialties)
-  const resolveQualification = makeTokenResolver(qualifications)
+  // Qualification goes in AS-IS (create any missing value, then exact lookup).
+  const rawQuals = [...new Set(batch.map((r) => String(g(r, 'Qualification') ?? '').trim()).filter(Boolean))]
+  const qualMap = await ensureLinkValues(base, headers, 'Doctor Qualification', 'qualification', rawQuals, qualifications)
+  const resolveQualification = (v) => qualMap[String(v ?? '').trim()] || null
 
   const counts = { updated: 0, unchanged: 0, addressAdded: 0, roleAdded: 0, notFound: 0, errors: 0 }
   const results = []

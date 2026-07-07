@@ -9,7 +9,7 @@
 
 import { transformRow, extractEmpId, invalidLinkFields } from './transform.js'
 import { fetchDoctorLeads, leadCode } from './leadIndex.js'
-import { fetchTerritories, makeTerritoryResolver, fetchDoctypeNames } from './territory.js'
+import { fetchTerritories, makeTerritoryResolver, fetchDoctypeNames, ensureLinkValues } from './territory.js'
 import { makeTokenResolver } from './hqMatch.js'
 
 // ---- ERPNext reads ----------------------------------------------------------
@@ -99,7 +99,11 @@ export async function runProcess({ base, authHeaders, rows, offset = 0, batchSiz
   ])
   const resolveTerritory = makeTerritoryResolver(territories)
   const resolveSpecialty = makeTokenResolver(specialties)
-  const resolveQualification = makeTokenResolver(qualifications)
+  // Qualification goes in AS-IS (DGO ≠ MD.DGO ≠ MBBS.DGO): create any missing
+  // value, then look it up exactly — no fuzzy/containment guessing.
+  const rawQuals = [...new Set(batch.map((r) => String(r['Qualification'] ?? '').trim()).filter(Boolean))]
+  const qualMap = await ensureLinkValues(base, headers, 'Doctor Qualification', 'qualification', rawQuals, qualifications)
+  const resolveQualification = (v) => qualMap[String(v ?? '').trim()] || null
 
   const transformed = batch.map((r) => transformRow(r, empMap, existing.set, resolveTerritory, resolveSpecialty, resolveQualification))
 
