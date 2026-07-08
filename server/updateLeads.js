@@ -10,10 +10,14 @@
 //      matches one, leave it. If it matches none, CREATE it as a new Address.
 //      Existing addresses are never edited or deleted — old data we don't have
 //      in the sheet must be preserved.
-//   2. ROLE PROFILES ARE ADDITIVE. A Lead's custom_role_profile child table can
-//      carry several departments (CND / Elbrit / Vasco …). We only ever ADD the
-//      row for THIS sheet's employee (if absent); the other departments' rows
-//      are kept exactly (matched by their child-row `name`), never deleted.
+//   2. ROLE PROFILES ARE ONE-PER-DEPARTMENT. A Lead's custom_role_profile child
+//      table can carry several departments (CND / Elbrit / Vasco …). The sheet's
+//      employee owns exactly ONE department, so for THAT department we keep a
+//      single row carrying the sheet's role profile: add it if the department is
+//      absent, and if the department already exists under a different (old) role
+//      profile — or is duplicated across rows — delete those and add the sheet's
+//      value. Every OTHER department's rows are kept exactly (matched by their
+//      child-row `name`), never touched.
 //   3. SCALARS UPDATE ON CHANGE ONLY. A field is written only when the sheet has
 //      a value that differs (after normalization) from what's in UAT. A blank
 //      sheet value never overwrites an existing UAT value.
@@ -144,7 +148,9 @@ async function resolveLeadNames(base, headers, codes) {
 
 async function fetchEmployees(base, headers, empCodes) {
   if (empCodes.length === 0) return {}
-  const fields = encodeURIComponent(JSON.stringify(['name', 'role_id', 'custom_role_profile']))
+  // `department` tells us which department the employee's role profile belongs to,
+  // so the update can collapse that department to the sheet's single value.
+  const fields = encodeURIComponent(JSON.stringify(['name', 'role_id', 'custom_role_profile', 'department']))
   const filters = encodeURIComponent(JSON.stringify([['name', 'in', empCodes]]))
   const j = await getJSON(`${base}/api/resource/Employee?fields=${fields}&filters=${filters}&limit_page_length=0`, headers, 'Employee fetch')
   const map = {}
@@ -215,10 +221,10 @@ export async function runUpdate({ base, authHeaders, rows, offset = 0, batchSize
   const qualMap = await ensureLinkValues(base, headers, 'Doctor Qualification', 'qualification', rawQuals, qualifications)
   const resolveQualification = (v) => qualMap[String(v ?? '').trim()] || null
 
-  const counts = { updated: 0, unchanged: 0, addressAdded: 0, roleAdded: 0, notFound: 0, errors: 0 }
+  const counts = { updated: 0, unchanged: 0, addressAdded: 0, roleAdded: 0, roleDeduped: 0, notFound: 0, errors: 0 }
   const results = []
 
-  await mapLimit(batch, concurrency, async (r) => {
+  const processRow = async (r) => {
     const code = strip(g(r, 'Dr. Code'))
     const dr = g(r, 'Dr. Name')
     const name = nameByCode[code]
@@ -247,20 +253,38 @@ export async function runUpdate({ base, authHeaders, rows, offset = 0, batchSize
     // (3) scalar changes
     const patch = scalarPatch(desiredLead, live)
 
-    // (2) role profile — append the employee's rp if missing; keep all others.
+    // (2) role profile — the sheet's employee owns ONE department. Keep every
+    // OTHER department's rows verbatim, and collapse THIS employee's department to
+    // a single row carrying the sheet's role profile: add it if the department is
+    // absent; if the department already exists under a different (old) role profile
+    // — or is duplicated across rows — delete those and add the sheet's value.
     // Vacant Emp Code falls back to the id embedded in the Emp Name.
     const emp = resolveEmp(r, empMap)
     const rp = emp ? (emp.role_id || emp.custom_role_profile || '').trim() : ''
+    const rpDept = emp ? (emp.department || '').trim() : ''
     const liveRoles = Array.isArray(live.custom_role_profile) ? live.custom_role_profile : []
-    const rolePresent = rp && liveRoles.some((x) => (x.role_profile_list || '').trim() === rp)
-    let roleAdded = false
-    if (rp && !rolePresent) {
-      patch.custom_role_profile = [
-        ...liveRoles.map((x) => ({ name: x.name, role_profile_list: x.role_profile_list })),
-        { role_profile_list: rp },
-      ]
-      roleAdded = true
+    // A live row belongs to the sheet employee's department when it shares the
+    // department, OR already carries the exact role profile (covers a row whose
+    // department ERPNext hasn't fetched yet). Rows of a different department are
+    // never matched, so they're always preserved.
+    const sameDept = (x) => (rpDept && text(x.department) === text(rpDept)) || (rp && (x.role_profile_list || '').trim() === rp)
+    let roleAdded = false, roleDeduped = false, removedRoles = []
+    if (rp) {
+      const others = liveRoles.filter((x) => !sameDept(x))
+      const mine = liveRoles.filter((x) => sameDept(x))
+      // Already correct: exactly one row for this department, and it's the sheet's.
+      const alreadyCorrect = mine.length === 1 && (mine[0].role_profile_list || '').trim() === rp
+      if (!alreadyCorrect) {
+        patch.custom_role_profile = [
+          ...others.map((x) => ({ name: x.name, role_profile_list: x.role_profile_list })),
+          { role_profile_list: rp },
+        ]
+        removedRoles = mine.map((x) => (x.role_profile_list || '').trim()).filter(Boolean)
+        roleAdded = mine.length === 0   // department was absent → pure add
+        roleDeduped = mine.length > 0   // replaced ≥1 old/duplicate row for this dept
+      }
     }
+    const roleChanged = roleAdded || roleDeduped
 
     // (1) address — append a new one only if ALL address lines (line1, line2,
     // city, pincode) match none of the Lead's existing addresses. Any difference
@@ -274,9 +298,9 @@ export async function runUpdate({ base, authHeaders, rows, offset = 0, batchSize
     }
 
     const leadFields = Object.keys(patch).filter((k) => k !== 'custom_role_profile')
-    if (leadFields.length === 0 && !roleAdded && !needAddress) {
+    if (leadFields.length === 0 && !roleChanged && !needAddress) {
       counts.unchanged++
-      results.push({ code, name, ok: true, leadFields: [], roleAdded: false, addressAdded: false })
+      results.push({ code, name, ok: true, leadFields: [], roleAdded: false, roleDeduped: false, addressAdded: false })
       return
     }
 
@@ -294,7 +318,7 @@ export async function runUpdate({ base, authHeaders, rows, offset = 0, batchSize
           if (res.ok) droppedLinks = bad
         }
       }
-      if (res.ok) { counts.updated++; if (roleAdded) counts.roleAdded++ }
+      if (res.ok) { counts.updated++; if (roleAdded) counts.roleAdded++; if (roleDeduped) counts.roleDeduped++ }
       else { ok = false; error = res.error; counts.errors++ }
     }
     if (ok && needAddress) {
@@ -305,7 +329,27 @@ export async function runUpdate({ base, authHeaders, rows, offset = 0, batchSize
       else if (/duplicate entry/i.test(ar.error || '')) { /* skip, already present */ }
       else { ok = false; error = ar.error; counts.errors++ }
     }
-    results.push({ code, name, ok, error, leadFields, roleAdded, addressAdded: needAddress, droppedLinks })
+    results.push({ code, name, ok, error, leadFields, roleAdded, roleDeduped, removedRoles, addressAdded: needAddress, droppedLinks })
+  }
+
+  // Group rows by their resolved Lead so the SAME Lead is never written by two
+  // workers at once. Child-table PUTs are last-write-wins, so a doctor appearing
+  // in several rows / departments within one batch could otherwise drop a dedupe
+  // or an add. Different Leads still run concurrently; rows sharing a Lead run one
+  // after another (rows with no resolved Lead get a unique key, so they don't
+  // serialize against each other).
+  const groups = new Map()
+  batch.forEach((r, i) => {
+    const code = strip(g(r, 'Dr. Code'))
+    const key = (code && nameByCode[code]) || `__row_${i}`
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(r)
+  })
+  await mapLimit([...groups.values()], concurrency, async (group) => {
+    for (const r of group) {
+      // eslint-disable-next-line no-await-in-loop
+      await processRow(r)
+    }
   })
 
   const done = offset + batchSize >= rows.length

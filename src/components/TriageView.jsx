@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { parseSheet } from '../lib/parseSheet.js'
-import { reconcileSheet, processBatch, updateBatch, getCompleted, markCompleted } from '../data/source.js'
+import { reconcileSheet, processBatch, updateBatch, auditRolesBatch, getCompleted, markCompleted } from '../data/source.js'
 import { listFolderFiles, downloadFromDrive } from '../lib/googleDrive.js'
 import { IconDownload } from './icons.jsx'
 import ReconcileView from './ReconcileView.jsx'
@@ -52,6 +52,13 @@ export default function TriageView({ live }) {
   const [updReport, setUpdReport] = useState(null) // { counts, results }
   const [updError, setUpdError] = useState(null)
   const [mergedCount, setMergedCount] = useState(0) // duplicate sets merged (reported up by DuplicatesPanel)
+
+  // Duplicate-department audit state (read-only scan of the "to update" Leads) —
+  // not persisted; re-run any time.
+  const [auditRunning, setAuditRunning] = useState(false)
+  const [auditProg, setAuditProg] = useState(null) // { processed, total }
+  const [auditReport, setAuditReport] = useState(null) // { counts, flagged }
+  const [auditError, setAuditError] = useState(null)
 
   // Google Drive folder browser (inline file list; server-side, no login).
   const [driveState, setDriveState] = useState('idle') // idle | loading | ready | not-configured | error
@@ -121,6 +128,7 @@ export default function TriageView({ live }) {
     setData(null); setParsedRows(null); setFileName(''); setPhase('idle'); setError(null)
     setSelected(new Set()); setUpdateSelected(new Set()); setRunReport(null); setShowValidate(false); setRunProg(null); setRunError(null)
     setUpdReport(null); setUpdProg(null); setUpdError(null); setShowFullValidate(false); setMergedCount(0); setActiveFileId(null)
+    setAuditRunning(false); setAuditProg(null); setAuditReport(null); setAuditError(null)
     setStoreWarn(false)
     dropJSON(STORE_DATA); dropJSON(STORE_UI) // completed marks (STORE_DONE) are kept on purpose
   }
@@ -179,14 +187,15 @@ export default function TriageView({ live }) {
     if (!window.confirm(
       `UPDATE ${pending.length} doctor(s) already in ERPNext UAT?` +
       (alreadyDone ? `\n\n(${alreadyDone} already updated in a previous run are skipped.)` : '') +
-      `\n\nWrites live: changed fields are updated, the employee's role profile is added if missing, ` +
+      `\n\nWrites live: changed fields are updated, the employee's role profile is set for their department ` +
+      `(replacing an old or duplicated role profile for that same department), ` +
       `and a new address is added only when the sheet's address isn't already on the Lead. ` +
-      `Existing addresses and other role profiles are never removed. A failed batch is retried and, ` +
+      `Other departments' role profiles and existing addresses are never removed. A failed batch is retried and, ` +
       `if it still fails, marked as an error and skipped — the run continues to the end.`,
     )) return
 
     const total = fullRows.length
-    const counts = { updated: 0, unchanged: 0, addressAdded: 0, roleAdded: 0, notFound: 0, errors: 0 }
+    const counts = { updated: 0, unchanged: 0, addressAdded: 0, roleAdded: 0, roleDeduped: 0, notFound: 0, errors: 0 }
     const results = []
     const doneCodes = new Set(updDone)
     setUpdRunning(true); setUpdError(null); setUpdProg({ processed: 0, total })
@@ -233,12 +242,58 @@ export default function TriageView({ live }) {
     setUpdRunning(false)
   }
 
+  // Scan every "already in UAT" Lead for a duplicated department in its Sales
+  // Team (Role Profile) child table — read-only, no writes. Loops /api/audit-roles
+  // batch-by-batch (stateless; we own the offset), accumulating flagged doctors.
+  const runAudit = async () => {
+    if (!data?.update || auditRunning) return
+    const items = data.update.map((u) => ({ code: u.code, name: u.name, hq: u.hq, leadName: u.uatId }))
+    if (items.length === 0) { window.alert('No doctors already in UAT to scan.'); return }
+
+    const total = items.length
+    const counts = { scanned: 0, flagged: 0, errors: 0 }
+    const flagged = []
+    setAuditRunning(true); setAuditError(null); setAuditProg({ processed: 0, total })
+    setAuditReport({ counts: { ...counts }, flagged })
+
+    const BATCH = 60
+    let offset = 0
+    while (offset < items.length) {
+      let out = null
+      for (let attempt = 0; attempt < 3 && !out; attempt++) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          out = await auditRolesBatch({ items, offset, batchSize: BATCH })
+        } catch (e) {
+          // eslint-disable-next-line no-await-in-loop
+          if (attempt < 2) await sleep(1200 * (attempt + 1))
+          else { setAuditError(e.message) }
+        }
+      }
+      if (!out) {
+        // Skip this batch's rows and carry on, so one bad batch never kills the scan.
+        counts.errors += Math.min(BATCH, items.length - offset)
+        setAuditProg({ processed: Math.min(offset + BATCH, total), total })
+        setAuditReport({ counts: { ...counts }, flagged: [...flagged] })
+        offset += BATCH
+        continue
+      }
+      for (const k in counts) counts[k] += out.counts?.[k] || 0
+      flagged.push(...(out.flagged || []))
+      offset += BATCH
+      setAuditProg({ processed: Math.min(offset, total), total })
+      setAuditReport({ counts: { ...counts }, flagged: [...flagged] })
+    }
+    setAuditRunning(false)
+  }
+
   // Parse + triage a chosen sheet (local upload or Google Drive), shared by both
   // entry points so the two behave identically from here on.
   const processFile = async (file) => {
     setFileName(file.name); setError(null); setPhase('working'); setData(null); setParsedRows(null)
     setRunReport(null); setRunError(null); setRunProg(null); setSelected(new Set()); setUpdateSelected(new Set())
     setShowValidate(false); setShowFullValidate(false); setUpdReport(null); setUpdProg(null); setUpdError(null); setMergedCount(0); setStoreWarn(false)
+    setAuditRunning(false); setAuditProg(null); setAuditReport(null); setAuditError(null)
     try {
       const { rows } = await parseSheet(file)
       const out = await reconcileSheet(rows.map((r) => r.raw))
@@ -445,6 +500,15 @@ export default function TriageView({ live }) {
             onReset={resetUpdDone}
           />
 
+          <RoleAuditPanel
+            total={data.update.length}
+            running={auditRunning}
+            prog={auditProg}
+            report={auditReport}
+            error={auditError}
+            onRun={runAudit}
+          />
+
           <div className="card" style={{ padding: 18 }}>
             <div className="rc-upload" style={{ alignItems: 'flex-start' }}>
               <div>
@@ -586,9 +650,10 @@ function UpdateBlock({ rows, selected, setSelected, disabled, running, prog, rep
         </button>
       </div>
       <p className="card__hint" style={{ padding: '0 4px 8px', margin: 0 }}>
-        Updates changed fields only, adds the employee's role profile if missing, and adds the sheet's address
-        only when it isn't already on the Lead (matched on address + city). Existing addresses and other
-        departments' role profiles are never removed. Runs in batches; re-running is safe.
+        Updates changed fields, sets the employee's role profile for their department — replacing an old or
+        duplicated role profile for that same department — and adds the sheet's address only when it isn't
+        already on the Lead (matched on address + city). Other departments' role profiles and existing
+        addresses are never removed. Runs in batches; re-running is safe.
       </p>
 
       {prog && (
@@ -610,6 +675,7 @@ function UpdateBlock({ rows, selected, setSelected, disabled, running, prog, rep
           <Kpi n={c.unchanged} label="Unchanged" />
           <Kpi n={c.addressAdded} label="Addresses added" />
           <Kpi n={c.roleAdded} label="Role profiles added" />
+          <Kpi n={c.roleDeduped} label="Dept duplicates fixed" tone={c.roleDeduped ? 'warning' : ''} />
           <Kpi n={c.errors + c.notFound} label="Errors" tone={c.errors + c.notFound ? 'error' : ''} />
         </div>
       )}
@@ -677,6 +743,91 @@ function UpdateBlock({ rows, selected, setSelected, disabled, running, prog, rep
             </div>
           )}
         </>
+      )}
+    </div>
+  )
+}
+
+// Read-only "duplicate department" scan of the "already in UAT" Leads. Flags a
+// doctor whose Sales Team (Role Profile) child table lists the same department
+// on more than one row — e.g. two rows both "CND Coimbatore - ELPL". Nothing is
+// written; this only surfaces the leads to clean up by hand.
+function RoleAuditPanel({ total, running, prog, report, error, onRun }) {
+  const pct = prog && prog.total ? Math.round((prog.processed / prog.total) * 100) : 0
+  const c = report?.counts
+  const flagged = report?.flagged || []
+  return (
+    <div className="card">
+      <div className="toolbar">
+        <span className="section-label" style={{ margin: 0 }}>
+          Duplicate department in Sales Team{c ? ` · ${c.flagged} found` : ''}
+        </span>
+        <div className="filterbar__spacer" />
+        {flagged.length > 0 && (
+          <button className="export-btn" onClick={() => exportRoleAudit(flagged)}><IconDownload width={15} height={15} /> Export</button>
+        )}
+        <button className="btn btn--ready" disabled={running || total === 0} onClick={onRun}>
+          {running ? 'Scanning…' : report ? 'Re-scan' : `Scan ${total} doctors`}
+        </button>
+      </div>
+      <p className="card__hint" style={{ padding: '0 4px 8px', margin: 0 }}>
+        Checks each doctor already in UAT and lists the ones whose <b>Sales Team → Role Profile</b> table has the
+        same <b>Department</b> on more than one row. Read-only — nothing is changed; fix the duplicates in ERPNext.
+      </p>
+
+      {prog && (
+        <div style={{ padding: '0 4px 8px' }}>
+          <div style={{ height: 10, borderRadius: 6, background: 'rgba(148,163,184,0.25)', overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${pct}%`, background: 'var(--accent, #2563eb)', transition: 'width .25s ease' }} />
+          </div>
+          <p className="card__hint" style={{ margin: '6px 0 0' }}>
+            {running ? 'Scanning' : 'Done'} — {prog.processed}/{prog.total} doctors ({pct}%)
+          </p>
+        </div>
+      )}
+
+      {error && <p className="reviewbox__msg err" style={{ margin: '0 4px 10px' }}>Error: {error}</p>}
+
+      {c && (
+        <div className="rc-kpis" style={{ margin: '0 4px 12px' }}>
+          <Kpi n={c.scanned} label="Scanned" />
+          <Kpi n={c.flagged} label="Duplicate dept" tone={c.flagged ? 'warning' : 'ok'} />
+          <Kpi n={c.errors} label="Errors" tone={c.errors ? 'error' : ''} />
+        </div>
+      )}
+
+      {report && !running && flagged.length === 0 && (
+        <p className="card__hint" style={{ padding: '0 4px 10px' }}>No doctor has the same department twice. 🎉</p>
+      )}
+
+      {flagged.length > 0 && (
+        <div className="table-wrap">
+          <table className="dt">
+            <thead>
+              <tr><th>Dr Code</th><th>Doctor</th><th>HQ</th><th>Duplicated department(s)</th></tr>
+            </thead>
+            <tbody>
+              {flagged.slice(0, CAP).map((f, i) => (
+                <tr key={f.code + i}>
+                  <td className="code">{f.code}</td>
+                  <td>{f.name || '—'}</td>
+                  <td>{f.hq || '—'}</td>
+                  <td style={{ maxWidth: 520, whiteSpace: 'normal' }}>
+                    {f.duplicates.map((d, j) => (
+                      <div key={j}>
+                        <b>{d.department}</b> ×{d.count}
+                        {d.roleProfiles.filter(Boolean).length > 0 && (
+                          <span className="card__hint"> — {d.roleProfiles.filter(Boolean).join(', ')}</span>
+                        )}
+                      </div>
+                    ))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {flagged.length > CAP && <p className="card__hint" style={{ padding: 8 }}>Showing first {CAP} of {flagged.length}. Export for the full list.</p>}
+        </div>
       )}
     </div>
   )
@@ -917,4 +1068,18 @@ const exportExceptions = (exs) => exportTable(
 const exportUpdateErrors = (errs) => exportTable(
   errs.map((r) => ({ 'Dr Code': r.code, Lead: r.name || '', Detail: r.error || '' })),
   'update-errors',
+)
+// One row per duplicated department (a doctor with two clashing departments
+// yields two rows), so the CRM can work the list line-by-line.
+const exportRoleAudit = (flagged) => exportTable(
+  flagged.flatMap((f) => f.duplicates.map((d) => ({
+    'Dr Code': f.code,
+    Doctor: f.name || '',
+    HQ: f.hq || '',
+    Lead: f.leadName || '',
+    Department: d.department,
+    Count: d.count,
+    'Role Profiles': d.roleProfiles.filter(Boolean).join(', '),
+  }))),
+  'duplicate-departments',
 )

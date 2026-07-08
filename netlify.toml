@@ -42,6 +42,12 @@
   to = "/.netlify/functions/update"
   status = 200
 
+# Read-only audit: report Leads with the same department twice in the Sales Team.
+[[redirects]]
+  from = "/api/audit-roles"
+  to = "/.netlify/functions/audit-roles"
+  status = 200
+
 # Merge padded duplicate Leads into their clean form and delete the padded ones.
 [[redirects]]
   from = "/api/merge-duplicates"

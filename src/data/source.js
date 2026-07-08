@@ -105,6 +105,20 @@ export async function updateBatch({ rows, offset = 0, batchSize = 40 }) {
   return body
 }
 
+// Read-only scan of EXISTING Leads for a duplicated department in the Sales Team
+// (Role Profile) child table. Never writes. Stateless per call — the caller
+// sends the full items[] and drives the offset loop until { done: true }.
+export async function auditRolesBatch({ items, offset = 0, batchSize = 60 }) {
+  const res = await fetch('/api/audit-roles', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ items, offset, batchSize }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`)
+  return body
+}
+
 // Merge padded duplicate Leads into their clean form (moving addresses) and
 // delete the padded ones. Stateless per call — caller drives the offset loop.
 export async function mergeDuplicatesBatch({ duplicates, offset = 0, batchSize = 20 }) {

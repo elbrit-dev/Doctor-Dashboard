@@ -17,6 +17,7 @@ import { mapLead } from './mapLead.js'
 import { triage } from './triage.js'
 import { runProcess } from './process.js'
 import { runUpdate } from './updateLeads.js'
+import { runRoleAudit } from './auditRoles.js'
 import { runMerge } from './mergeDuplicates.js'
 import { fetchDoctorLeads } from './leadIndex.js'
 import { driveConfigured, driveStatusDetail, listFolderFiles, downloadFile } from './googleDrive.js'
@@ -195,6 +196,28 @@ app.post('/api/update', async (req, res) => {
     res.json({ source: `ERPNext · ${BASE}`, action: 'update', ...out })
   } catch (err) {
     console.error('[proxy] update failed:', err.message)
+    res.status(502).json({ error: 'ERPNext request failed', detail: err.message })
+  }
+})
+
+// Read-only audit: report EXISTING Leads whose Role Profile ("Sales Team")
+// child table lists the same department more than once. Never writes. Stateless
+// per batch — the frontend drives the offset loop. POST { items, offset?, batchSize? }.
+app.post('/api/audit-roles', async (req, res) => {
+  if (!configured()) return res.status(503).json({ error: 'ERPNext not configured' })
+  const { items, offset, batchSize } = req.body || {}
+  if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items[] is required' })
+  try {
+    const out = await runRoleAudit({
+      base: BASE,
+      authHeaders,
+      items,
+      offset: Number(offset) || 0,
+      batchSize: Number(batchSize) || 60,
+    })
+    res.json({ source: `ERPNext · ${BASE}`, action: 'audit-roles', ...out })
+  } catch (err) {
+    console.error('[proxy] audit-roles failed:', err.message)
     res.status(502).json({ error: 'ERPNext request failed', detail: err.message })
   }
 })
