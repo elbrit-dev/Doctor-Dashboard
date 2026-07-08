@@ -39,8 +39,12 @@ export default function ReconcileView({ live, rows: externalRows = null, embedde
   // Error detail posted to ERPNext: field + error TYPE + both values.
   const issueList = (r) => {
     if (!r.found) return ['Record not found in ERPNext']
-    return cols.filter((f) => ['mismatch', 'missing_erp'].includes(r.fields[f.key]?.status))
+    const out = cols.filter((f) => ['mismatch', 'missing_erp'].includes(r.fields[f.key]?.status))
       .map((f) => `${f.label} (${STATUS_META[r.fields[f.key].status].label}): sheet "${fmt(r.fields[f.key].sheet)}" / UAT "${fmt(r.fields[f.key].erp)}"`)
+    for (const d of (r.dupDepartments || [])) {
+      out.push(`Duplicate department: "${d.department}" appears ${d.count}× (${d.roleProfiles.filter(Boolean).join(', ')})`)
+    }
+    return out
   }
 
   const reviewRow = async (r, decision) => {
@@ -199,6 +203,7 @@ export default function ReconcileView({ live, rows: externalRows = null, embedde
             <Kpi n={data.summary.notFound} label="Not found in ERPNext" tone="error" />
             <Kpi n={data.summary.mismatches} label="Field mismatches" tone="warning" />
             <Kpi n={data.summary.missing} label="Missing in ERPNext" tone="error" />
+            <Kpi n={data.summary.dupDept} label="Duplicate dept" tone="error" />
           </div>
 
           <div className="card" style={{ padding: 14 }}>
@@ -333,6 +338,11 @@ function Row({ r, fields, expanded, onToggle, reviewedAs, busy, onReview, isSele
         <td>
           <div className="docname">{r.sheetName || '—'}</div>
           <div className="code">{r.erpId}</div>
+          {r.dupDepartments?.length > 0 && r.dupDepartments.map((d, i) => (
+            <span key={i} className="sev-error" style={{ fontWeight: 600, display: 'block', marginTop: 4 }} title="Same department listed more than once in the Sales Team table">
+              ⚠ dup dept: {d.department} ×{d.count}
+            </span>
+          ))}
           {reviewedAs && <span className={`review-chip ${reviewedAs}`} style={{ marginTop: 4 }}>{reviewedAs === 'ready' ? '✅ Ready' : '⚠️ Error'}</span>}
         </td>
         {fields.map((f) => {
@@ -358,13 +368,19 @@ function Row({ r, fields, expanded, onToggle, reviewedAs, busy, onReview, isSele
                   </div>
                 )
               })}
-              {r.mismatch + r.missing === 0 && <span className="card__hint">All fields match. Address record: {r.addressCreated ? 'created' : 'not created'}.</span>}
+              {r.dupDepartments?.length > 0 && r.dupDepartments.map((d, i) => (
+                <div key={'dup' + i} className="rc-detail__item">
+                  <span className="rc-tag rc-mismatch">Duplicate department</span>
+                  <div className="rc-detail__vals"><b>{d.department}</b> appears ×{d.count} — {d.roleProfiles.filter(Boolean).join(', ') || '—'}</div>
+                </div>
+              ))}
+              {r.mismatch + r.missing === 0 && (!r.dupDepartments || r.dupDepartments.length === 0) && <span className="card__hint">All fields match. Address record: {r.addressCreated ? 'created' : 'not created'}.</span>}
               <div className="reviewbox__actions" style={{ marginTop: 4 }}>
                 <button className="btn btn--ready" disabled={busy} onClick={(e) => { e.stopPropagation(); onReview(r, 'ready') }}>
                   {busy ? 'Saving…' : '✅ Mark Ready'}
                 </button>
                 <button className="btn btn--error" disabled={busy} onClick={(e) => { e.stopPropagation(); onReview(r, 'error') }}>
-                  ⚠️ Report Error{r.mismatch + r.missing > 0 ? ` (${r.mismatch + r.missing})` : ''}
+                  ⚠️ Report Error{r.mismatch + r.missing + (r.dupDepartments?.length || 0) > 0 ? ` (${r.mismatch + r.missing + (r.dupDepartments?.length || 0)})` : ''}
                 </button>
                 {reviewedAs && <span className={`review-chip ${reviewedAs}`}>{reviewedAs === 'ready' ? '✅ Reviewed Ready' : '⚠️ Reviewed Error'}</span>}
               </div>
@@ -401,6 +417,13 @@ function exportIssues(results, fields) {
           'Sheet value': fmt(c.sheet), 'UAT value': fmt(c.erp),
         })
       }
+    }
+    for (const d of (r.dupDepartments || [])) {
+      issues.push({
+        Code: r.code, Doctor: r.sheetName, 'ERPNext ID': r.erpId,
+        Field: 'Sales Team department', Status: `Duplicate department ×${d.count}`,
+        'Sheet value': '', 'UAT value': `${d.department} — ${d.roleProfiles.filter(Boolean).join(', ')}`,
+      })
     }
   }
 

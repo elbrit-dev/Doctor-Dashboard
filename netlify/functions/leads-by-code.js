@@ -47,17 +47,22 @@ export const handler = async (event) => {
       if (!primaries[key] || lead.name === `DR-${key}`) primaries[key] = lead
     }
     const list = Object.values(primaries)
+    // Neither addresses (Dynamic Link 403) nor role profiles (child table not in
+    // list queries) can be bulk-read, so fetch both per primary in one loop. Role
+    // profiles power the "duplicate department" flag in the validation view.
     const addrMap = {}
-    if (withAddresses) {
-      for (let i = 0; i < list.length; i += CONCURRENCY) {
-        const batch = list.slice(i, i + CONCURRENCY)
-        const results = await Promise.all(batch.map((l) => fetchAddresses(l.name).catch(() => [])))
-        batch.forEach((l, j) => { addrMap[l.name] = results[j] })
-      }
+    const rpMap = {}
+    for (let i = 0; i < list.length; i += CONCURRENCY) {
+      const batch = list.slice(i, i + CONCURRENCY)
+      const results = await Promise.all(batch.map(async (l) => ({
+        addresses: withAddresses ? await fetchAddresses(l.name).catch(() => []) : [],
+        roleProfiles: await fetchRoleProfiles(l.name).catch(() => []),
+      })))
+      batch.forEach((l, j) => { addrMap[l.name] = results[j].addresses; rpMap[l.name] = results[j].roleProfiles })
     }
     const byCode = {}
     for (const [key, lead] of Object.entries(primaries)) {
-      byCode[key] = mapLead(lead, addrMap[lead.name] || [])
+      byCode[key] = mapLead({ ...lead, custom_role_profile: rpMap[lead.name] || [] }, addrMap[lead.name] || [])
     }
     return json(200, { requested: clean.length, found: Object.keys(byCode).length, doctors: byCode })
   } catch (err) {
@@ -104,4 +109,14 @@ async function fetchAddresses(name) {
   if (!r.ok) return []
   const j = await r.json()
   return Array.isArray(j.data) ? j.data : []
+}
+
+// A Lead's role-profile ("Sales Team") child rows. Child tables aren't returned
+// by list queries, so read the single Lead doc.
+async function fetchRoleProfiles(name) {
+  const url = `${BASE}/api/resource/Lead/${encodeURIComponent(name)}`
+  const r = await fetch(url, { headers: authHeaders })
+  if (!r.ok) return []
+  const j = await r.json()
+  return Array.isArray(j.data?.custom_role_profile) ? j.data.custom_role_profile : []
 }

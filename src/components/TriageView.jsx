@@ -752,10 +752,15 @@ function UpdateBlock({ rows, selected, setSelected, disabled, running, prog, rep
 // doctor whose Sales Team (Role Profile) child table lists the same department
 // on more than one row — e.g. two rows both "CND Coimbatore - ELPL". Nothing is
 // written; this only surfaces the leads to clean up by hand.
+const AUDIT_PAGE = 10
 function RoleAuditPanel({ total, running, prog, report, error, onRun }) {
+  const [page, setPage] = useState(0)
   const pct = prog && prog.total ? Math.round((prog.processed / prog.total) * 100) : 0
   const c = report?.counts
   const flagged = report?.flagged || []
+  const pages = Math.max(1, Math.ceil(flagged.length / AUDIT_PAGE))
+  const p = Math.min(page, pages - 1)
+  const pageRows = flagged.slice(p * AUDIT_PAGE, p * AUDIT_PAGE + AUDIT_PAGE)
   return (
     <div className="card">
       <div className="toolbar">
@@ -766,7 +771,7 @@ function RoleAuditPanel({ total, running, prog, report, error, onRun }) {
         {flagged.length > 0 && (
           <button className="export-btn" onClick={() => exportRoleAudit(flagged)}><IconDownload width={15} height={15} /> Export</button>
         )}
-        <button className="btn btn--ready" disabled={running || total === 0} onClick={onRun}>
+        <button className="btn btn--ready" disabled={running || total === 0} onClick={() => { setPage(0); onRun() }}>
           {running ? 'Scanning…' : report ? 'Re-scan' : `Scan ${total} doctors`}
         </button>
       </div>
@@ -801,33 +806,41 @@ function RoleAuditPanel({ total, running, prog, report, error, onRun }) {
       )}
 
       {flagged.length > 0 && (
-        <div className="table-wrap">
-          <table className="dt">
-            <thead>
-              <tr><th>Dr Code</th><th>Doctor</th><th>HQ</th><th>Duplicated department(s)</th></tr>
-            </thead>
-            <tbody>
-              {flagged.slice(0, CAP).map((f, i) => (
-                <tr key={f.code + i}>
-                  <td className="code">{f.code}</td>
-                  <td>{f.name || '—'}</td>
-                  <td>{f.hq || '—'}</td>
-                  <td style={{ maxWidth: 520, whiteSpace: 'normal' }}>
-                    {f.duplicates.map((d, j) => (
-                      <div key={j}>
-                        <b>{d.department}</b> ×{d.count}
-                        {d.roleProfiles.filter(Boolean).length > 0 && (
-                          <span className="card__hint"> — {d.roleProfiles.filter(Boolean).join(', ')}</span>
-                        )}
-                      </div>
-                    ))}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {flagged.length > CAP && <p className="card__hint" style={{ padding: 8 }}>Showing first {CAP} of {flagged.length}. Export for the full list.</p>}
-        </div>
+        <>
+          <div className="table-wrap">
+            <table className="dt">
+              <thead>
+                <tr><th>Dr Code</th><th>Doctor</th><th>HQ</th><th>Duplicated department(s)</th></tr>
+              </thead>
+              <tbody>
+                {pageRows.map((f, i) => (
+                  <tr key={f.code + i}>
+                    <td className="code">{f.code}</td>
+                    <td>{f.name || '—'}</td>
+                    <td>{f.hq || '—'}</td>
+                    <td style={{ maxWidth: 520, whiteSpace: 'normal' }}>
+                      {f.duplicates.map((d, j) => (
+                        <div key={j}>
+                          <b>{d.department}</b> ×{d.count}
+                          {d.roleProfiles.filter(Boolean).length > 0 && (
+                            <span className="card__hint"> — {d.roleProfiles.filter(Boolean).join(', ')}</span>
+                          )}
+                        </div>
+                      ))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {pages > 1 && (
+            <div className="rc-pager">
+              <button disabled={p === 0} onClick={() => setPage(p - 1)}>← Prev</button>
+              <span>Page {p + 1} of {pages} · {flagged.length} doctors · {AUDIT_PAGE}/page</span>
+              <button disabled={p >= pages - 1} onClick={() => setPage(p + 1)}>Next →</button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

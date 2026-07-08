@@ -153,6 +153,24 @@ function compareAddress(field, sheetRaw, addresses, docName) {
   return { status: hit / sheetWords.length >= WORD_OVERLAP ? 'match' : 'mismatch', sheet: sheetRaw, erp: disp }
 }
 
+// A doctor's Sales Team (role profile) table must carry each department at most
+// once. Group the doctor's role profiles by normalized department and return the
+// departments that appear more than once (with the role profiles that collide) —
+// this is a data-integrity error surfaced alongside the field mismatches.
+function duplicateDepartments(roleProfiles) {
+  const byDept = new Map()
+  for (const rp of (roleProfiles || [])) {
+    const dept = String(rp.department ?? '').trim()
+    if (!dept) continue
+    const g = byDept.get(text(dept)) || { department: dept, roleProfiles: [] }
+    g.roleProfiles.push(String(rp.role ?? rp.role_profile_list ?? '').trim())
+    byDept.set(text(dept), g)
+  }
+  return [...byDept.values()]
+    .filter((g) => g.roleProfiles.length > 1)
+    .map((g) => ({ department: g.department, count: g.roleProfiles.length, roleProfiles: g.roleProfiles }))
+}
+
 // sheetRows: [{ code, raw }]; erpByCode: { code -> mapped doctor }
 export function reconcile(sheetRows, erpByCode, { includeAddress = true } = {}) {
   const activeFields = FIELDS.filter((f) => includeAddress || f.kind !== 'address')
@@ -173,6 +191,7 @@ export function reconcile(sheetRows, erpByCode, { includeAddress = true } = {}) 
         if (r.status === 'missing_erp') missing++
       }
     }
+    const dupDepartments = erp ? duplicateDepartments(erp.roleProfiles) : []
     return {
       code: c,
       sheetName: row.raw['Dr. Name'] || '',
@@ -182,7 +201,8 @@ export function reconcile(sheetRows, erpByCode, { includeAddress = true } = {}) 
       fields,
       mismatch,
       missing,
-      hasIssue: !erp || mismatch > 0 || missing > 0,
+      dupDepartments,
+      hasIssue: !erp || mismatch > 0 || missing > 0 || dupDepartments.length > 0,
     }
   })
 
@@ -205,6 +225,7 @@ export function reconcile(sheetRows, erpByCode, { includeAddress = true } = {}) 
     withIssues: results.filter((r) => r.found && r.hasIssue).length,
     mismatches: results.reduce((s, r) => s + r.mismatch, 0),
     missing: results.reduce((s, r) => s + r.missing, 0),
+    dupDept: results.filter((r) => r.dupDepartments && r.dupDepartments.length > 0).length,
     perField,
     addressChecked: includeAddress,
     activeFields: activeFields.map((f) => f.key),

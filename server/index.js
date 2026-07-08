@@ -115,18 +115,22 @@ app.post('/api/leads-by-code', async (req, res) => {
       if (!primaries[key] || lead.name === `DR-${key}`) primaries[key] = lead
     }
     const list = Object.values(primaries)
-    // Addresses can't be bulk-mapped (Dynamic Link is 403); fetch per primary.
+    // Neither addresses (Dynamic Link 403) nor role profiles (child table not in
+    // list queries) can be bulk-read, so fetch both per primary in one loop. Role
+    // profiles power the "duplicate department" flag in the validation view.
     const addrMap = {}
-    if (withAddresses) {
-      for (let i = 0; i < list.length; i += CONCURRENCY) {
-        const batch = list.slice(i, i + CONCURRENCY)
-        const results = await Promise.all(batch.map((l) => fetchAddresses(l.name).catch(() => [])))
-        batch.forEach((l, j) => { addrMap[l.name] = results[j] })
-      }
+    const rpMap = {}
+    for (let i = 0; i < list.length; i += CONCURRENCY) {
+      const batch = list.slice(i, i + CONCURRENCY)
+      const results = await Promise.all(batch.map(async (l) => ({
+        addresses: withAddresses ? await fetchAddresses(l.name).catch(() => []) : [],
+        roleProfiles: await fetchRoleProfiles(l.name).catch(() => []),
+      })))
+      batch.forEach((l, j) => { addrMap[l.name] = results[j].addresses; rpMap[l.name] = results[j].roleProfiles })
     }
     const byCode = {}
     for (const [key, lead] of Object.entries(primaries)) {
-      byCode[key] = mapLead(lead, addrMap[lead.name] || [])
+      byCode[key] = mapLead({ ...lead, custom_role_profile: rpMap[lead.name] || [] }, addrMap[lead.name] || [])
     }
     res.json({
       source: `ERPNext · ${BASE}`,
@@ -322,6 +326,16 @@ async function fetchLead(name) {
   if (!r.ok) throw new Error(`${name}: HTTP ${r.status} ${r.statusText}`)
   const json = await r.json()
   return json.data
+}
+
+// Fetch a Lead's role-profile ("Sales Team") child rows. Child tables aren't
+// returned by list queries, so this reads the single Lead doc.
+async function fetchRoleProfiles(name) {
+  const url = `${BASE}/api/resource/Lead/${encodeURIComponent(name)}`
+  const r = await fetch(url, { headers: authHeaders })
+  if (!r.ok) return []
+  const json = await r.json()
+  return Array.isArray(json.data?.custom_role_profile) ? json.data.custom_role_profile : []
 }
 
 // Fetch ALL Address doctypes linked to a Lead via the Dynamic Link child table.
