@@ -549,9 +549,26 @@ export default function TriageView({ live }) {
 // are sent to ERPNext. Select-all covers every code, even rows beyond the render
 // cap; individual checkboxes show for the rendered rows.
 function CreateBlock({ rows, selected, setSelected, disabled, onExport }) {
-  const allCodes = rows.map((r) => r.code)
-  const allOn = allCodes.length > 0 && allCodes.every((c) => selected.has(c))
-  const toggleAll = () => setSelected(() => (allOn ? new Set() : new Set(allCodes)))
+  // Search across code/name/emp/HQ so a specific handful can be found and
+  // selected out of thousands of "to create" rows (the list is capped at CAP).
+  const [query, setQuery] = useState('')
+  const q = query.trim().toLowerCase()
+  const filtered = q
+    ? rows.filter((r) =>
+        [r.code, r.name, r.empCode, r.hq].some((v) => String(v ?? '').toLowerCase().includes(q)))
+    : rows
+
+  // "Select all" acts on the CURRENT search result, so it adds only the matching
+  // rows (and toggles them off) without disturbing selections made under another
+  // search — exactly what you want for picking a targeted subset.
+  const visibleCodes = filtered.map((r) => r.code)
+  const allOn = visibleCodes.length > 0 && visibleCodes.every((c) => selected.has(c))
+  const toggleAll = () => setSelected((prev) => {
+    const n = new Set(prev)
+    if (allOn) visibleCodes.forEach((c) => n.delete(c))
+    else visibleCodes.forEach((c) => n.add(c))
+    return n
+  })
   const toggle = (code) => setSelected((prev) => {
     const n = new Set(prev); n.has(code) ? n.delete(code) : n.add(code); return n
   })
@@ -569,34 +586,50 @@ function CreateBlock({ rows, selected, setSelected, disabled, onExport }) {
       {rows.length === 0 ? (
         <p className="card__hint" style={{ padding: '4px 4px 8px' }}>None.</p>
       ) : (
-        <div className="table-wrap">
-          <table className="dt">
-            <thead>
-              <tr>
-                <th style={{ width: 36 }}>
-                  <input type="checkbox" checked={allOn} disabled={disabled} onChange={toggleAll} title="Select all" />
-                </th>
-                <th>Dr Code</th><th>Doctor</th><th>Emp Code</th><th>HQ</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.slice(0, CAP).map((r, i) => (
-                <tr key={r.code + i} className={selected.has(r.code) ? 'is-selected' : ''}>
-                  <td><input type="checkbox" checked={selected.has(r.code)} disabled={disabled} onChange={() => toggle(r.code)} /></td>
-                  <td className="code">{r.code}</td>
-                  <td>{r.name || '—'}</td>
-                  <td>{r.empCode || '—'}</td>
-                  <td>{r.hq || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {rows.length > CAP && (
-            <p className="card__hint" style={{ padding: 8 }}>
-              Showing first {CAP} of {rows.length}. "Select all" still selects every code.
-            </p>
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 4px 8px' }}>
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search DR code, doctor, emp code or HQ…"
+              style={{ flex: 1, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border, #d0d5dd)', font: 'inherit' }}
+            />
+            {q && <span className="card__hint" style={{ whiteSpace: 'nowrap' }}>{filtered.length} match{filtered.length === 1 ? '' : 'es'}</span>}
+          </div>
+          {filtered.length === 0 ? (
+            <p className="card__hint" style={{ padding: '4px 4px 8px' }}>No rows match “{query}”.</p>
+          ) : (
+            <div className="table-wrap">
+              <table className="dt">
+                <thead>
+                  <tr>
+                    <th style={{ width: 36 }}>
+                      <input type="checkbox" checked={allOn} disabled={disabled} onChange={toggleAll} title={q ? 'Select all matches' : 'Select all'} />
+                    </th>
+                    <th>Dr Code</th><th>Doctor</th><th>Emp Code</th><th>HQ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.slice(0, CAP).map((r, i) => (
+                    <tr key={r.code + i} className={selected.has(r.code) ? 'is-selected' : ''}>
+                      <td><input type="checkbox" checked={selected.has(r.code)} disabled={disabled} onChange={() => toggle(r.code)} /></td>
+                      <td className="code">{r.code}</td>
+                      <td>{r.name || '—'}</td>
+                      <td>{r.empCode || '—'}</td>
+                      <td>{r.hq || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {filtered.length > CAP && (
+                <p className="card__hint" style={{ padding: 8 }}>
+                  Showing first {CAP} of {filtered.length}{q ? ' matches' : ''}. "Select all" still selects every {q ? 'match' : 'code'}.
+                </p>
+              )}
+            </div>
           )}
-        </div>
+        </>
       )}
     </div>
   )
