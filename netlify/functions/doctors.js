@@ -46,6 +46,10 @@ const REVIEW_MARKER = 'CRM Review'
 
 async function fetchLead(name) {
   const r = await fetch(`${BASE}/api/resource/Lead/${encodeURIComponent(name)}`, { headers: authHeaders })
+  // A missing Lead (404) is not a connection failure — the batch is UAT-specific
+  // and simply may not exist on this site. Skip it instead of failing the probe;
+  // still throw on real errors (auth 401/403, upstream 5xx) so the app can react.
+  if (r.status === 404) return null
   if (!r.ok) throw new Error(`${name}: HTTP ${r.status} ${r.statusText}`)
   return (await r.json()).data
 }
@@ -64,6 +68,7 @@ async function fetchAddresses(name) {
 
 async function fetchDoctor(name) {
   const [lead, addresses] = await Promise.all([fetchLead(name), fetchAddresses(name).catch(() => [])])
+  if (!lead) return null // Lead not on this site — skip it.
   return mapLead(lead, addresses)
 }
 
@@ -93,5 +98,5 @@ async function fetchAll(ids) {
     const batch = ids.slice(i, i + CONCURRENCY)
     out.push(...(await Promise.all(batch.map(fetchDoctor))))
   }
-  return out
+  return out.filter(Boolean) // drop Leads that weren't found on this site
 }
