@@ -6,9 +6,9 @@ import TriageView from './components/TriageView.jsx'
 export default function App() {
   // Lightweight connection probe — drives the Live/Snapshot badge and gates the
   // views that need the live ERPNext connection.
-  const [conn, setConn] = useState({ mode: 'loading', fetchedAt: null })
+  const [conn, setConn] = useState({ mode: 'loading', fetchedAt: null, source: null })
   useEffect(() => {
-    loadDoctors().then((f) => setConn({ mode: f.mode, fetchedAt: f.fetchedAt })).catch(() => setConn({ mode: 'snapshot' }))
+    loadDoctors().then((f) => setConn({ mode: f.mode, fetchedAt: f.fetchedAt, source: f.source })).catch(() => setConn({ mode: 'snapshot' }))
   }, [])
 
   const live = conn.mode === 'live'
@@ -24,7 +24,7 @@ export default function App() {
           </div>
         </div>
         <div className="header__meta">
-          <ModeBadge mode={conn.mode} fetchedAt={conn.fetchedAt} />
+          <ModeBadge mode={conn.mode} fetchedAt={conn.fetchedAt} source={conn.source} />
         </div>
       </header>
 
@@ -33,9 +33,16 @@ export default function App() {
   )
 }
 
-function ModeBadge({ mode, fetchedAt }) {
+// Pull the host out of the source string ("ERPNext · https://uat.elbrit.org")
+// so the badge names the site the app is actually connected to — never a guess.
+function siteLabel(source) {
+  const url = String(source || '').split('·').pop().trim()
+  try { return new URL(url).host } catch { return url || 'ERPNext' }
+}
+
+function ModeBadge({ mode, fetchedAt, source }) {
   if (mode === 'live') {
-    return <span className="env-badge"><span className="dot" />Live · ERPNext UAT</span>
+    return <span className="env-badge"><span className="dot" />Live · {siteLabel(source)}</span>
   }
   if (mode === 'snapshot') {
     return <span className="env-badge"><span className="dot dot--amber" />Snapshot {fetchedAt || ''}</span>
