@@ -73,16 +73,21 @@ const SCALAR_FIELDS = [
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 async function fetchRetry(url, opts, tries = 4) {
-  let last
+  let lastErr, lastRes
   for (let i = 0; i < tries; i++) {
     try {
       const r = await fetch(url, opts)
       if (r.status < 500) return r
-      last = new Error(`HTTP ${r.status}`)
-    } catch (e) { last = e }
+      lastRes = r // keep the 5xx response so its body can be read if we give up
+      lastErr = new Error(`HTTP ${r.status}`)
+    } catch (e) { lastErr = e; lastRes = undefined }
     if (i < tries - 1) await sleep(600 * (i + 1))
   }
-  throw last || new Error('request failed')
+  // Retries exhausted. If the final attempt reached the server (a 5xx), hand the
+  // response back so the caller can surface ERPNext's actual error message
+  // instead of a bare "HTTP 500". Only throw when no response ever came back.
+  if (lastRes) return lastRes
+  throw lastErr || new Error('request failed')
 }
 
 async function getJSON(url, headers, label) {
@@ -100,9 +105,15 @@ async function send(method, url, headers, body) {
   try { r = await fetchRetry(url, { method, headers: { ...headers, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }) }
   catch (e) { return { ok: false, status: 0, error: e.message } }
   if (r.ok) return { ok: true, status: r.status }
+  // ERPNext errors come back as JSON ({exception, _server_messages, message}) for
+  // validation failures, but a hard 500 can be an HTML traceback — so read the raw
+  // body once and try JSON first, falling back to the stripped text.
   let detail = ''
-  try { const j = await r.json(); detail = j.exception || j._server_messages || j.message || '' } catch { detail = r.statusText }
-  return { ok: false, status: r.status, error: String(detail).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300) }
+  let body = ''
+  try { body = await r.text() } catch { /* ignore */ }
+  try { const j = JSON.parse(body); detail = j.exception || j._server_messages || j.message || '' } catch { detail = body }
+  detail = String(detail).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+  return { ok: false, status: r.status, error: (detail || r.statusText || `HTTP ${r.status}`).slice(0, 300) }
 }
 
 async function mapLimit(items, limit, fn) {
