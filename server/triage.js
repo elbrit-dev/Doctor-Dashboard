@@ -37,17 +37,26 @@ export function triage(rows, uatLeads) {
     }
     const g = groups[code]
     if (!g) {
+      create.push(info) // no Lead at all → create the clean DR-<code>
+      continue
+    }
+    if (!g.clean) {
+      // Only padded DR-000<code> form(s) exist — no clean DR-<code> yet. Create the
+      // clean Lead from the sheet. It stays OUT of the update bucket (nothing clean
+      // to update) and is NOT flagged as a duplicate yet: once the clean Lead is
+      // created, the next reconcile sees clean+padded and lists it as a duplicate
+      // (has_clean_form) to merge and then delete the padded ones.
       create.push(info)
       continue
     }
-    update.push({ ...info, uatId: g.clean || g.all[0] })
+    // Clean form exists → update it (and flag any padded twins as duplicates).
+    update.push({ ...info, uatId: g.clean })
     if (g.all.length > 1 && !dupMap[code]) {
-      const keep = g.clean || `DR-${code}`
       dupMap[code] = {
         code,
-        keep,
-        remove: g.all.filter((n) => n !== keep),
-        kind: g.clean ? 'has_clean_form' : 'no_clean_form',
+        keep: g.clean,
+        remove: g.all.filter((n) => n !== g.clean),
+        kind: 'has_clean_form',
         all: g.all,
       }
     }

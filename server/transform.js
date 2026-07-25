@@ -192,16 +192,19 @@ export function buildLead(r, code, name, dr, rp, opts = {}) {
   return lead
 }
 
-// Classify one sheet row against UAT, exactly like the n8n node:
-//   - code already in UAT       → kind 'skip'  (no action; reported only)
-//   - employee/role missing     → kind 'exception'
-//   - otherwise                 → kind 'create' (carries `lead` + `address`)
+// Classify one sheet row against UAT:
+//   - clean DR-<code> already exists → kind 'skip'  (no action; reported only)
+//   - employee/role missing          → kind 'exception'
+//   - otherwise                      → kind 'create' (carries `lead` + `address`)
+// `existing` is the set of codes that ALREADY have a clean DR-<code> Lead. A code
+// whose only Lead is padded (DR-000<code>) is NOT in it, so its clean twin gets
+// created here; the padded form is then merged in and deleted separately.
 export function transformRow(r, empMap, existing, resolveTerritory, resolveSpecialty, resolveQualification) {
   const code = strip(g(r, 'Dr. Code')); const name = 'DR-' + code; const dr = g(r, 'Dr. Name'); const ec = g(r, 'Emp Code')
   const address = buildAddress(r, name, dr)
 
   if (existing.has(code)) {
-    return { kind: 'skip', code, name, dr, reason: 'already_in_uat', hasAddress: !!address, address }
+    return { kind: 'skip', code, name, dr, reason: 'clean_form_exists', hasAddress: !!address, address }
   }
   const e = resolveEmp(r, empMap) // Emp Code, or the id inside the Emp Name for vacant codes
   if (!e) return { kind: 'exception', code, dr, empcode: ec, empname: g(r, 'Emp Name'), hq: g(r, 'HQ'), reason: 'employee_not_found' }

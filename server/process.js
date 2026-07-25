@@ -38,15 +38,18 @@ async function fetchEmployees(base, headers, empCodes) {
 
 async function fetchExistingCodes(base, headers) {
   const leads = await fetchDoctorLeads(base, headers)
-  const set = new Set(); const names = new Map() // normalized code -> [Lead names]
+  const set = new Set(); const clean = new Set(); const names = new Map() // normalized code -> [Lead names]
   for (const l of leads) {
     const c = leadCode(l)
     if (!c) continue
     set.add(c)
+    // A CLEAN Lead is one NAMED exactly DR-<code>. Only its presence blocks a
+    // create — a padded-only DR-000<code> should still get its clean twin made.
+    if (l.name === `DR-${c}`) clean.add(c)
     if (!names.has(c)) names.set(c, [])
     names.get(c).push(l.name)
   }
-  return { set, names }
+  return { set, clean, names }
 }
 
 // ---- ERPNext writes ---------------------------------------------------------
@@ -105,7 +108,9 @@ export async function runProcess({ base, authHeaders, rows, offset = 0, batchSiz
   const qualMap = await ensureLinkValues(base, headers, 'Doctor Qualification', 'qualification', rawQuals, qualifications)
   const resolveQualification = (v) => qualMap[String(v ?? '').trim()] || null
 
-  const transformed = batch.map((r) => transformRow(r, empMap, existing.set, resolveTerritory, resolveSpecialty, resolveQualification))
+  // Pass the CLEAN-form set (not every code): a code is skipped only when the
+  // clean DR-<code> already exists, so a padded-only code creates its clean twin.
+  const transformed = batch.map((r) => transformRow(r, empMap, existing.clean, resolveTerritory, resolveSpecialty, resolveQualification))
 
   const counts = { created: 0, skipped: 0, exceptions: 0, errors: 0 }
   const results = []
