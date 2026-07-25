@@ -642,10 +642,20 @@ function CreateBlock({ rows, selected, setSelected, disabled, onExport }) {
 const UPDATE_PAGE = 20
 function UpdateBlock({ rows, selected, setSelected, disabled, running, prog, report, error, onUpdate, done = new Set(), onReset }) {
   const [page, setPage] = useState(0)
+  // Search across code/name/emp/HQ so a specific subset can be found among the
+  // (often thousands of) "already in UAT" rows. Paging and select-all operate on
+  // the current matches; reset to page 1 whenever the query changes.
+  const [query, setQuery] = useState('')
+  const q = query.trim().toLowerCase()
+  const filtered = q
+    ? rows.filter((r) => [r.code, r.name, r.empCode, r.hq].some((v) => String(v ?? '').toLowerCase().includes(q)))
+    : rows
+  const onSearch = (v) => { setQuery(v); setPage(0) }
   // Already-updated codes are shown blurred (✓ updated) and excluded from
   // select-all / the pending count — only the rest are (re-)updatable.
-  const pendingCodes = rows.filter((r) => !done.has(r.code)).map((r) => r.code)
-  const doneCount = rows.length - pendingCodes.length
+  // pendingCodes drives select-all, so it follows the current search matches.
+  const pendingCodes = filtered.filter((r) => !done.has(r.code)).map((r) => r.code)
+  const doneCount = rows.filter((r) => done.has(r.code)).length // global — for the header/reset
   const allOn = pendingCodes.length > 0 && pendingCodes.every((c) => selected.has(c))
   const toggleAll = () => setSelected((prev) => {
     const n = new Set(prev)
@@ -655,9 +665,9 @@ function UpdateBlock({ rows, selected, setSelected, disabled, running, prog, rep
   })
   const toggle = (code) => setSelected((prev) => { const n = new Set(prev); n.has(code) ? n.delete(code) : n.add(code); return n })
   const selPending = [...selected].filter((c) => !done.has(c)).length
-  const pages = Math.max(1, Math.ceil(rows.length / UPDATE_PAGE))
+  const pages = Math.max(1, Math.ceil(filtered.length / UPDATE_PAGE))
   const p = Math.min(page, pages - 1)
-  const pageRows = rows.slice(p * UPDATE_PAGE, p * UPDATE_PAGE + UPDATE_PAGE)
+  const pageRows = filtered.slice(p * UPDATE_PAGE, p * UPDATE_PAGE + UPDATE_PAGE)
   const pct = prog && prog.total ? Math.round((prog.processed / prog.total) * 100) : 0
   const c = report?.counts
   const errs = report ? report.results.filter((r) => !r.ok) : []
@@ -738,42 +748,58 @@ function UpdateBlock({ rows, selected, setSelected, disabled, running, prog, rep
         <p className="card__hint" style={{ padding: '4px 4px 8px' }}>None already in UAT.</p>
       ) : (
         <>
-          <div className="table-wrap">
-            <table className="dt">
-              <thead>
-                <tr>
-                  <th style={{ width: 96 }}>
-                    <input type="checkbox" checked={allOn} disabled={disabled} onChange={toggleAll} title="Select all not-yet-updated" />
-                  </th>
-                  <th>Dr Code</th><th>Doctor</th><th>Emp Code</th><th>HQ</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pageRows.map((r, i) => {
-                  const isDone = done.has(r.code)
-                  return (
-                    <tr key={r.code + i} className={!isDone && selected.has(r.code) ? 'is-selected' : ''} style={isDone ? { opacity: 0.5 } : undefined}>
-                      <td>
-                        {isDone
-                          ? <span className="review-chip ready" title="Already updated in a previous run">✓ updated</span>
-                          : <input type="checkbox" checked={selected.has(r.code)} disabled={disabled} onChange={() => toggle(r.code)} />}
-                      </td>
-                      <td className="code">{r.code}</td>
-                      <td>{r.name || '—'}</td>
-                      <td>{r.empCode || '—'}</td>
-                      <td>{r.hq || '—'}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 4px 8px' }}>
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => onSearch(e.target.value)}
+              placeholder="Search DR code, doctor, emp code or HQ…"
+              style={{ flex: 1, padding: '7px 10px', borderRadius: 6, border: '1px solid var(--border, #d0d5dd)', font: 'inherit' }}
+            />
+            {q && <span className="card__hint" style={{ whiteSpace: 'nowrap' }}>{filtered.length} match{filtered.length === 1 ? '' : 'es'}</span>}
           </div>
-          {pages > 1 && (
-            <div className="rc-pager">
-              <button disabled={p === 0} onClick={() => setPage(p - 1)}>← Prev</button>
-              <span>Page {p + 1} of {pages} · {rows.length} rows · {UPDATE_PAGE}/page</span>
-              <button disabled={p >= pages - 1} onClick={() => setPage(p + 1)}>Next →</button>
-            </div>
+          {filtered.length === 0 ? (
+            <p className="card__hint" style={{ padding: '4px 4px 8px' }}>No rows match “{query}”.</p>
+          ) : (
+            <>
+              <div className="table-wrap">
+                <table className="dt">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 96 }}>
+                        <input type="checkbox" checked={allOn} disabled={disabled} onChange={toggleAll} title={q ? 'Select all matches not yet updated' : 'Select all not-yet-updated'} />
+                      </th>
+                      <th>Dr Code</th><th>Doctor</th><th>Emp Code</th><th>HQ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageRows.map((r, i) => {
+                      const isDone = done.has(r.code)
+                      return (
+                        <tr key={r.code + i} className={!isDone && selected.has(r.code) ? 'is-selected' : ''} style={isDone ? { opacity: 0.5 } : undefined}>
+                          <td>
+                            {isDone
+                              ? <span className="review-chip ready" title="Already updated in a previous run">✓ updated</span>
+                              : <input type="checkbox" checked={selected.has(r.code)} disabled={disabled} onChange={() => toggle(r.code)} />}
+                          </td>
+                          <td className="code">{r.code}</td>
+                          <td>{r.name || '—'}</td>
+                          <td>{r.empCode || '—'}</td>
+                          <td>{r.hq || '—'}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {pages > 1 && (
+                <div className="rc-pager">
+                  <button disabled={p === 0} onClick={() => setPage(p - 1)}>← Prev</button>
+                  <span>Page {p + 1} of {pages} · {filtered.length}{q ? ' matches' : ' rows'} · {UPDATE_PAGE}/page</span>
+                  <button disabled={p >= pages - 1} onClick={() => setPage(p + 1)}>Next →</button>
+                </div>
+              )}
+            </>
           )}
         </>
       )}
