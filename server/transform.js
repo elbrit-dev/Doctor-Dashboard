@@ -56,6 +56,9 @@ export function invalidLinkFields(errText) {
 // ERPNext Address text fields cap at 140 chars — trim so an over-long line
 // doesn't error/truncate on save.
 const cut140 = (s) => String(s || '').slice(0, 140)
+// Address `name` = "<address_title>-<address_type>" (+ maybe a "-N" duplicate
+// counter). Keep the title short enough that the whole name stays ≤ 140.
+const cutTitle = (s) => String(s || '').slice(0, 110)
 
 // A "vacant" Emp Code (e.g. V01869) has no Employee record, but the covering
 // employee's real id is embedded in the Emp Name, e.g.
@@ -156,7 +159,10 @@ export function buildAddress(r, name, dr) {
   // otherwise the 3rd line (e.g. "ROAD" of "MAIN ROAD") is silently dropped.
   const line2 = [a.line2, a.line3].map((s) => String(s || '').trim()).filter(Boolean).join(', ')
   return {
-    address_title: cut140(a.title), address_type: a.type, address_line1: cut140(a.line1), address_line2: cut140(line2),
+    // ERPNext names the Address "<title>-<type>" and rejects a name > 140 chars
+    // (pymysql 1406 "Data too long for column 'name'"). Cap the TITLE well under
+    // 140 to leave room for the "-<type>" suffix and any "-N" duplicate counter.
+    address_title: cutTitle(a.title), address_type: a.type, address_line1: cut140(a.line1), address_line2: cut140(line2),
     city: g(r, 'Dr. City (Clinic)'), state: canonState(g(r, 'Clinic State'), g(r, 'State')), pincode: g(r, 'Clinic Info - Pincode'),
     country: CFG.COUNTRY, links: [{ link_doctype: 'Lead', link_name: name }],
   }

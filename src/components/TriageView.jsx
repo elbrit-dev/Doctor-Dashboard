@@ -951,6 +951,7 @@ function ActionPanel({ selectedCount, running, runProg, runReport, runError, onR
       {c && (
         <div className="rc-kpis" style={{ marginTop: 14 }}>
           <Kpi n={c.created} label="Created" tone="ok" />
+          {c.renamed > 0 && <Kpi n={c.renamed} label="Renamed padded → clean" tone="ok" />}
           <Kpi n={c.skipped} label="Skipped (in UAT)" />
           <Kpi n={c.exceptions} label="Exceptions" tone="warning" />
           <Kpi n={c.errors} label="Errors" tone={c.errors ? 'error' : ''} />

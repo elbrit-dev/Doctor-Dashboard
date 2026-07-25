@@ -112,7 +112,7 @@ export async function runProcess({ base, authHeaders, rows, offset = 0, batchSiz
   // clean DR-<code> already exists, so a padded-only code creates its clean twin.
   const transformed = batch.map((r) => transformRow(r, empMap, existing.clean, resolveTerritory, resolveSpecialty, resolveQualification))
 
-  const counts = { created: 0, skipped: 0, exceptions: 0, errors: 0 }
+  const counts = { created: 0, renamed: 0, skipped: 0, exceptions: 0, errors: 0 }
   const results = []
   const exceptions = []
   const toCreate = []
@@ -121,6 +121,13 @@ export async function runProcess({ base, authHeaders, rows, offset = 0, batchSiz
     if (t.kind === 'exception') { counts.exceptions++; exceptions.push(t); continue }
     if (t.kind === 'skip') { counts.skipped++; continue } // already in UAT
     toCreate.push(t) // kind 'create'
+  }
+
+  // The padded twin (DR-000<code>) of a create target, if one exists — prefer the
+  // zero-padded "DR-0…" form, else any non-clean Lead sharing the code.
+  const paddedFor = (code) => {
+    const all = existing.names.get(code) || []
+    return all.find((n) => /^DR-?0\d/i.test(n)) || all.find((n) => n !== `DR-${code}`) || null
   }
 
   await mapLimit(toCreate, 5, async (t) => {
@@ -134,6 +141,26 @@ export async function runProcess({ base, authHeaders, rows, offset = 0, batchSiz
         const reduced = { ...t.lead }; bad.forEach((f) => delete reduced[f])
         res = await send('POST', `${base}/api/resource/Lead`, headers, reduced)
         if (res.ok) res.droppedLinks = bad
+      }
+    }
+    // Doctor already has a Contact (created by the padded twin), so creating a
+    // second Lead 409s on the unique Contact name — the clean twin can't be made.
+    // Instead RENAME the padded Lead to the clean DR-<code>: same record, same
+    // Contact/addresses/history, now with the clean id and no leftover to delete.
+    // The sheet's field values are applied afterwards by the normal update pass.
+    if (!res.ok && (res.status === 409 || /duplicate/i.test(res.error || ''))) {
+      const padded = paddedFor(t.code)
+      if (padded) {
+        const rn = await send('POST', `${base}/api/method/frappe.client.rename_doc`, headers,
+          { doctype: 'Lead', old_name: padded, new_name: t.name })
+        if (rn.ok) {
+          counts.renamed++
+          results.push({ code: t.code, op: 'rename_lead', ok: true, status: rn.status, from: padded, to: t.name })
+          return
+        }
+        results.push({ code: t.code, op: 'rename_lead', ok: false, status: rn.status, from: padded, to: t.name, error: rn.error })
+        counts.errors++
+        return
       }
     }
     results.push({ code: t.code, op: 'create_lead', ok: res.ok, status: res.status, error: res.error, droppedLinks: res.droppedLinks })
