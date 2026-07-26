@@ -27,7 +27,10 @@ npm-debug.log*
 public/*.xlsx
 public/*.xls
 public/*.csv
-*.mjs
+
+# Local one-off report script (NOT a blanket *.mjs ignore — the Netlify
+# functions are .mjs and MUST be committed/deployed).
+/hq-report.mjs
 
 # Local shared-completed store (dev only; prod uses Netlify Blobs)
 server/completed.json
