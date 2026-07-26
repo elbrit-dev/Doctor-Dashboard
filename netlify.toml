@@ -5,6 +5,14 @@
   publish = "dist"
   functions = "netlify/functions"
 
+# The functions are ES modules (package.json has "type":"module") and import
+# shared code from ../../server/*.js. esbuild bundles each function plus those
+# imports into one loadable module; WITHOUT this the runtime treats them as
+# CommonJS and every call fails to load with
+#   "SyntaxError: Cannot use import statement outside a module"  → HTTP 502.
+[functions]
+  node_bundler = "esbuild"
+
 # Make the frontend's existing fetch('/api/doctors') hit the serverless function.
 # Must come BEFORE the SPA catch-all below.
 [[redirects]]
