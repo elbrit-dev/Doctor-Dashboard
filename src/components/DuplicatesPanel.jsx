@@ -36,6 +36,21 @@ export default function DuplicatesPanel({ duplicates, onExport, onMergedChange }
     if (nextDone.length) setDone((s) => new Set([...s, ...nextDone]))
   }
 
+  // The "✓ merged" marks live in the BROWSER (localStorage), not on the server, so
+  // they survive refreshes — but they also go stale if the data/server changes
+  // (e.g. duplicates re-appear, or a fresh backend). This clears them so every set
+  // is offered for merging again; re-merging is safe (already-gone sets are skipped).
+  const resetMerged = () => {
+    if (done.size === 0) return
+    if (!window.confirm(
+      `Re-enable all ${duplicates.length} duplicate set(s) for merging again?\n\n` +
+      `This only clears the "✓ merged" marks stored in this browser — it doesn't undo any ` +
+      `merge. Use it when the sets are actually still duplicated on the server (e.g. a new server).`,
+    )) return
+    setDone(new Set())
+    setReport(null); setError(null)
+  }
+
   const mergeAll = async () => {
     if (running || pending.length === 0) return
     if (!window.confirm(
@@ -104,6 +119,16 @@ export default function DuplicatesPanel({ duplicates, onExport, onMergedChange }
         {duplicates.length > 0 && (
           <>
             <button className="export-btn" onClick={onExport}><IconDownload width={15} height={15} /> Export duplicates</button>
+            {done.size > 0 && (
+              <button
+                className="export-btn"
+                onClick={resetMerged}
+                disabled={running != null}
+                title="Clear the ✓ merged marks (stored in this browser) and re-enable every set for merging — e.g. after switching to a fresh server or if the duplicates re-appeared"
+              >
+                ↻ Merge all again
+              </button>
+            )}
             <button className="btn btn--ready" onClick={mergeAll} disabled={running != null || pending.length === 0}>
               {running === 'all' ? 'Merging…' : `Merge 0-series → clean (${pending.length})`}
             </button>
