@@ -201,12 +201,11 @@ export default function TriageView({ live }) {
     setUpdRunning(true); setUpdError(null); setUpdProg({ processed: 0, total })
     setUpdReport({ counts: { ...counts }, results })
 
-    // 10 rows/call: each /api/update does a ~2.4s fixed reference fetch PLUS a
-    // per-row lead-doc GET + address GET + writes, and UAT slows under load, so
-    // large batches ran past the function limit / made UAT 5xx → HTTP 502. Ten
-    // keeps every call short and gentle on UAT; the offset loop + resume make the
-    // extra round-trips cheap (already-updated codes are skipped on re-run).
-    const BATCH = 10
+    // Back to 40/call: the earlier 502s were a function BUILD/load failure (v1
+    // CommonJS wrapper + an esbuild redeclaration error), NOT a per-batch timeout,
+    // so shrinking the batch never actually helped. If real timeouts appear on
+    // very large sheets now that the function runs, lower this.
+    const BATCH = 40
     let offset = 0
     let processed = 0
     // Send only THIS batch's slice each call — never the whole sheet — so the
