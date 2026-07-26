@@ -201,7 +201,10 @@ export default function TriageView({ live }) {
     setUpdRunning(true); setUpdError(null); setUpdProg({ processed: 0, total })
     setUpdReport({ counts: { ...counts }, results })
 
-    const BATCH = 40
+    // 20 rows/call keeps each /api/update invocation well under Netlify's function
+    // time limit — 40 was timing out (HTTP 502) on large sheets, since each row
+    // does several sequential ERPNext calls (GET lead doc + addresses + writes).
+    const BATCH = 20
     let offset = 0
     let processed = 0
     // Send only THIS batch's slice each call — never the whole sheet — so the
