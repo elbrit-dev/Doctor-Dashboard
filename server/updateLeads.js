@@ -282,23 +282,44 @@ export async function runUpdate({ base, authHeaders, rows, offset = 0, batchSize
     // department ERPNext hasn't fetched yet). Rows of a different department are
     // never matched, so they're always preserved.
     const sameDept = (x) => (rpDept && text(x.department) === text(rpDept)) || (rp && (x.role_profile_list || '').trim() === rp)
-    let roleAdded = false, roleDeduped = false, removedRoles = []
-    if (rp) {
-      const others = liveRoles.filter((x) => !sameDept(x))
-      const mine = liveRoles.filter((x) => sameDept(x))
-      // Already correct: exactly one row for this department, and it's the sheet's.
-      const alreadyCorrect = mine.length === 1 && (mine[0].role_profile_list || '').trim() === rp
-      if (!alreadyCorrect) {
-        patch.custom_role_profile = [
-          ...others.map((x) => ({ name: x.name, role_profile_list: x.role_profile_list })),
-          { role_profile_list: rp },
-        ]
-        removedRoles = mine.map((x) => (x.role_profile_list || '').trim()).filter(Boolean)
-        roleAdded = mine.length === 0   // department was absent → pure add
-        roleDeduped = mine.length > 0   // replaced ≥1 old/duplicate row for this dept
-      }
+    // Build the DESIRED role-profile table:
+    //  • keep every OTHER department's rows,
+    //  • for the sheet employee's department, keep exactly one row = the sheet's rp
+    //    (replacing an old/duplicated profile for that same department),
+    //  • and de-duplicate the WHOLE table by role profile — the same role profile
+    //    listed 2+ times (in ANY department) is always redundant, so extras drop.
+    // Existing rows keep their child-row `name` (updated in place); a new rp is
+    // appended without a name (ERPNext creates it). Rows whose `name` we omit are
+    // deleted, since a PUT replaces the child table wholesale.
+    const desiredRows = []
+    const seenRpl = new Set()
+    const pushRpl = (rpl, childName) => {
+      const k = (rpl || '').trim()
+      if (!k || seenRpl.has(k)) return
+      seenRpl.add(k)
+      desiredRows.push(childName ? { name: childName, role_profile_list: k } : { role_profile_list: k })
     }
-    const roleChanged = roleAdded || roleDeduped
+    if (rp) {
+      for (const x of liveRoles) if (!sameDept(x)) pushRpl(x.role_profile_list, x.name)
+      pushRpl(rp) // sheet employee's department → exactly this role profile
+    } else {
+      for (const x of liveRoles) pushRpl(x.role_profile_list, x.name)
+    }
+    // Changed only when the multiset of role profiles actually differs, so clean
+    // Leads are never rewritten.
+    const liveKeys = liveRoles.map((x) => (x.role_profile_list || '').trim()).filter(Boolean).sort()
+    const desiredKeys = desiredRows.map((x) => (x.role_profile_list || '').trim()).sort()
+    const roleChanged = liveKeys.length !== desiredKeys.length || liveKeys.some((k, i) => k !== desiredKeys[i])
+    let roleAdded = false, roleDeduped = false, removedRoles = []
+    if (roleChanged) {
+      patch.custom_role_profile = desiredRows
+      const liveCount = {}, desCount = {}
+      for (const k of liveKeys) liveCount[k] = (liveCount[k] || 0) + 1
+      for (const k of desiredKeys) desCount[k] = (desCount[k] || 0) + 1
+      for (const k in liveCount) if (liveCount[k] > (desCount[k] || 0)) removedRoles.push(k)
+      roleDeduped = removedRoles.length > 0   // a duplicate / old profile was removed
+      roleAdded = !!rp && !liveCount[rp]       // the sheet's profile was newly added
+    }
 
     // (1) address — append a new one only if ALL address lines (line1, line2,
     // city, pincode) match none of the Lead's existing addresses. Any difference
