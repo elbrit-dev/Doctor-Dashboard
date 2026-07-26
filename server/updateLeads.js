@@ -109,9 +109,12 @@ async function send(method, url, headers, body) {
   // validation failures, but a hard 500 can be an HTML traceback — so read the raw
   // body once and try JSON first, falling back to the stripped text.
   let detail = ''
-  let body = ''
-  try { body = await r.text() } catch { /* ignore */ }
-  try { const j = JSON.parse(body); detail = j.exception || j._server_messages || j.message || '' } catch { detail = body }
+  // NB: `body` is this function's request-body PARAM — read the response into a
+  // separate `raw` (re-declaring `body` here is a redeclaration error esbuild
+  // rejects, which was failing every function build).
+  let raw = ''
+  try { raw = await r.text() } catch { /* ignore */ }
+  try { const j = JSON.parse(raw); detail = j.exception || j._server_messages || j.message || '' } catch { detail = raw }
   detail = String(detail).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
   return { ok: false, status: r.status, error: (detail || r.statusText || `HTTP ${r.status}`).slice(0, 300) }
 }
