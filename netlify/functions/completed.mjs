@@ -8,33 +8,29 @@
 import { getStore } from '@netlify/blobs'
 
 const KEY = 'ids'
-const json = (statusCode, obj) => ({
-  statusCode,
-  headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-  body: JSON.stringify(obj),
-})
+const json = (obj, status = 200) => Response.json(obj, { status, headers: { 'Cache-Control': 'no-store' } })
 
-export const handler = async (event) => {
+export default async (req) => {
   let store
-  try { store = getStore('dvd-completed') } catch { return json(200, { ids: [], shared: false }) }
+  try { store = getStore('dvd-completed') } catch { return json({ ids: [], shared: false }) }
 
   const read = async () => {
     try { return (await store.get(KEY, { type: 'json' })) || [] } catch { return [] }
   }
 
-  if (event.httpMethod === 'GET') {
-    return json(200, { ids: await read(), shared: true })
+  if (req.method === 'GET') {
+    return json({ ids: await read(), shared: true })
   }
-  if (event.httpMethod === 'POST') {
+  if (req.method === 'POST') {
     let body = {}
-    try { body = JSON.parse(event.body || '{}') } catch { /* ignore */ }
+    try { body = await req.json() } catch { /* ignore */ }
     const id = String(body.id || '')
-    if (!id) return json(400, { error: 'id is required' })
+    if (!id) return json({ error: 'id is required' }, 400)
     const set = new Set(await read())
     if (body.done === false) set.delete(id); else set.add(id)
     const ids = [...set]
-    try { await store.setJSON(KEY, ids) } catch { return json(502, { error: 'Could not persist', ids }) }
-    return json(200, { ids, shared: true })
+    try { await store.setJSON(KEY, ids) } catch { return json({ error: 'Could not persist', ids }, 502) }
+    return json({ ids, shared: true })
   }
-  return json(405, { error: 'Method not allowed' })
+  return json({ error: 'Method not allowed' }, 405)
 }

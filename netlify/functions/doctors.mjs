@@ -14,23 +14,19 @@ const SECRET = process.env.ERPNEXT_API_SECRET || ''
 const CONCURRENCY = 10
 
 const authHeaders = { Authorization: `token ${KEY}:${SECRET}`, Accept: 'application/json' }
-const json = (statusCode, obj) => ({
-  statusCode,
-  headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-  body: JSON.stringify(obj),
-})
+const json = (obj, status = 200) => Response.json(obj, { status, headers: { 'Cache-Control': 'no-store' } })
 
-export const handler = async () => {
+export default async () => {
   if (!(BASE && KEY && SECRET)) {
-    return json(503, {
+    return json({
       error: 'ERPNext not configured',
       detail: 'Set ERPNEXT_URL, ERPNEXT_API_KEY and ERPNEXT_API_SECRET in Netlify → Site settings → Environment variables, then redeploy.',
-    })
+    }, 503)
   }
   try {
     const [docs, reviews] = await Promise.all([fetchAll(DOCTOR_IDS), fetchReviews(DOCTOR_IDS)])
     const withReview = docs.map((d) => ({ ...d, review: reviews[d.name] || null }))
-    return json(200, {
+    return json({
       mode: 'live',
       source: `ERPNext · ${BASE}`,
       fetchedAt: new Date().toISOString(),
@@ -38,7 +34,7 @@ export const handler = async () => {
       doctors: withReview,
     })
   } catch (err) {
-    return json(502, { error: 'Upstream ERPNext request failed', detail: err.message })
+    return json({ error: 'Upstream ERPNext request failed', detail: err.message }, 502)
   }
 }
 

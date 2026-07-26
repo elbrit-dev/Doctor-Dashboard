@@ -14,23 +14,19 @@ const BASE = (process.env.ERPNEXT_URL || '').replace(/\/+$/, '')
 const TOKEN = process.env.ERPNEXT_TOKEN || `${process.env.ERPNEXT_API_KEY || ''}:${process.env.ERPNEXT_API_SECRET || ''}`
 const authHeaders = { Authorization: `token ${TOKEN}`, Accept: 'application/json' }
 
-const json = (statusCode, obj) => ({
-  statusCode,
-  headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-  body: JSON.stringify(obj),
-})
+const json = (obj, status = 200) => Response.json(obj, { status, headers: { 'Cache-Control': 'no-store' } })
 
-export const handler = async (event) => {
-  if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' })
-  if (!BASE || TOKEN === ':') return json(503, { error: 'ERPNext not configured' })
+export default async (req) => {
+  if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
+  if (!BASE || TOKEN === ':') return json({ error: 'ERPNext not configured' }, 503)
   let body = {}
-  try { body = JSON.parse(event.body || '{}') } catch { /* ignore */ }
+  try { body = await req.json() } catch { /* ignore */ }
   const rows = Array.isArray(body.rows) ? body.rows : []
-  if (rows.length === 0) return json(400, { error: 'rows[] is required' })
+  if (rows.length === 0) return json({ error: 'rows[] is required' }, 400)
   try {
     const uatLeads = await fetchDoctorLeads(BASE, authHeaders)
-    return json(200, { source: `ERPNext · ${BASE}`, ...triage(rows, uatLeads) })
+    return json({ source: `ERPNext · ${BASE}`, ...triage(rows, uatLeads) })
   } catch (err) {
-    return json(502, { error: 'ERPNext fetch failed', detail: err.message })
+    return json({ error: 'ERPNext fetch failed', detail: err.message }, 502)
   }
 }

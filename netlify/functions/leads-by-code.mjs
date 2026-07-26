@@ -13,11 +13,7 @@ const CONCURRENCY = 10
 const LEAD_CHUNK = 100
 
 const authHeaders = { Authorization: `token ${KEY}:${SECRET}`, Accept: 'application/json' }
-const json = (statusCode, obj) => ({
-  statusCode,
-  headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-  body: JSON.stringify(obj),
-})
+const json = (obj, status = 200) => Response.json(obj, { status, headers: { 'Cache-Control': 'no-store' } })
 
 const BULK_FIELDS = [
   'name', 'custom_doctor_code', 'lead_name', 'first_name', 'salutation',
@@ -27,13 +23,13 @@ const BULK_FIELDS = [
   'custom_latitude', 'custom_longitude', 'custom_address_created',
 ]
 
-export const handler = async (event) => {
-  if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' })
-  if (!(BASE && KEY && SECRET)) return json(503, { error: 'ERPNext not configured' })
+export default async (req) => {
+  if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
+  if (!(BASE && KEY && SECRET)) return json({ error: 'ERPNext not configured' }, 503)
   let body = {}
-  try { body = JSON.parse(event.body || '{}') } catch { /* ignore */ }
+  try { body = await req.json() } catch { /* ignore */ }
   const codes = Array.isArray(body.codes) ? body.codes : []
-  if (codes.length === 0) return json(400, { error: 'codes[] is required' })
+  if (codes.length === 0) return json({ error: 'codes[] is required' }, 400)
   const withAddresses = body.addresses !== false
 
   const clean = [...new Set(codes.map(stripZeros).filter(Boolean))]
@@ -64,9 +60,9 @@ export const handler = async (event) => {
     for (const [key, lead] of Object.entries(primaries)) {
       byCode[key] = mapLead({ ...lead, custom_role_profile: rpMap[lead.name] || [] }, addrMap[lead.name] || [])
     }
-    return json(200, { requested: clean.length, found: Object.keys(byCode).length, doctors: byCode })
+    return json({ requested: clean.length, found: Object.keys(byCode).length, doctors: byCode })
   } catch (err) {
-    return json(502, { error: 'Bulk ERPNext fetch failed', detail: err.message })
+    return json({ error: 'Bulk ERPNext fetch failed', detail: err.message }, 502)
   }
 }
 

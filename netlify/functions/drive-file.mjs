@@ -3,29 +3,24 @@
 // path segment (see the redirect in netlify.toml). Binary body is base64-encoded.
 import { driveConfigured, driveStatusDetail, downloadFile } from '../../server/googleDrive.js'
 
-const err = (statusCode, obj) => ({
-  statusCode,
-  headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-  body: JSON.stringify(obj),
-})
+const err = (obj, status = 200) => Response.json(obj, { status, headers: { 'Cache-Control': 'no-store' } })
 
-export const handler = async (event) => {
-  if (!driveConfigured()) return err(503, { error: 'Google Drive not configured', detail: driveStatusDetail() })
-  const id = (event.path || '').split('/').filter(Boolean).pop()
-  if (!id) return err(400, { error: 'file id is required' })
+export default async (req) => {
+  if (!driveConfigured()) return err({ error: 'Google Drive not configured', detail: driveStatusDetail() }, 503)
+  const id = new URL(req.url).pathname.split('/').filter(Boolean).pop()
+  if (!id) return err({ error: 'file id is required' }, 400)
   try {
     const { buffer, filename, contentType } = await downloadFile(id)
-    return {
-      statusCode: 200,
+    // v2 returns a real Response with the raw bytes — no base64/isBase64Encoded.
+    return new Response(buffer, {
+      status: 200,
       headers: {
         'Content-Type': contentType,
         'Content-Disposition': `attachment; filename="${filename.replace(/"/g, '')}"`,
         'Cache-Control': 'no-store',
       },
-      body: buffer.toString('base64'),
-      isBase64Encoded: true,
-    }
+    })
   } catch (e) {
-    return err(502, { error: 'Google Drive download failed', detail: e.message })
+    return err({ error: 'Google Drive download failed', detail: e.message }, 502)
   }
 }

@@ -8,27 +8,23 @@ const SECRET = process.env.ERPNEXT_API_SECRET || ''
 const REVIEW_MARKER = 'CRM Review'
 
 const authHeaders = { Authorization: `token ${KEY}:${SECRET}`, Accept: 'application/json' }
-const json = (statusCode, obj) => ({
-  statusCode,
-  headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-  body: JSON.stringify(obj),
-})
+const json = (obj, status = 200) => Response.json(obj, { status, headers: { 'Cache-Control': 'no-store' } })
 
-export const handler = async (event) => {
-  if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' })
-  if (!(BASE && KEY && SECRET)) return json(503, { error: 'ERPNext not configured' })
+export default async (req) => {
+  if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
+  if (!(BASE && KEY && SECRET)) return json({ error: 'ERPNext not configured' }, 503)
   let body = {}
-  try { body = JSON.parse(event.body || '{}') } catch { /* ignore */ }
+  try { body = await req.json() } catch { /* ignore */ }
   const { id, decision, issues = [], note = '', by = 'dashboard' } = body
   if (!id || !['ready', 'error'].includes(decision)) {
-    return json(400, { error: 'id and decision (ready|error) are required' })
+    return json({ error: 'id and decision (ready|error) are required' }, 400)
   }
   try {
     const content = buildReviewComment(decision, issues, note, by)
     const out = await addComment(id, content, by)
-    return json(200, { ok: true, id, decision, commentId: out?.name || null })
+    return json({ ok: true, id, decision, commentId: out?.name || null })
   } catch (err) {
-    return json(502, { error: 'Failed to post review to ERPNext', detail: err.message })
+    return json({ error: 'Failed to post review to ERPNext', detail: err.message }, 502)
   }
 }
 

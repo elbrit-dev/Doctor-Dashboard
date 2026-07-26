@@ -3,18 +3,14 @@
 // environment variables (see server/googleDrive.js for the accepted vars).
 import { driveConfigured, driveStatusDetail, listFolderFiles } from '../../server/googleDrive.js'
 
-const json = (statusCode, obj) => ({
-  statusCode,
-  headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-  body: JSON.stringify(obj),
-})
+const json = (obj, status = 200) => Response.json(obj, { status, headers: { 'Cache-Control': 'no-store' } })
 
-export const handler = async () => {
-  if (!driveConfigured()) return json(200, { configured: false, detail: driveStatusDetail(), files: [] })
+export default async () => {
+  if (!driveConfigured()) return json({ configured: false, detail: driveStatusDetail(), files: [] })
   try {
     const files = await listFolderFiles()
-    return json(200, { configured: true, files })
+    return json({ configured: true, files })
   } catch (err) {
-    return json(502, { configured: true, error: 'Google Drive list failed', detail: err.message })
+    return json({ configured: true, error: 'Google Drive list failed', detail: err.message }, 502)
   }
 }
