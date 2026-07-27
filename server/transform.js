@@ -188,7 +188,9 @@ export function buildLead(r, code, name, dr, rp, opts = {}) {
     mobile_no: (mob || undefined),
     territory: territory || ('HQ-' + g(r, 'HQ')), state: g(r, 'State'), city: g(r, 'Dr. City (Clinic)'), country: CFG.COUNTRY,
     status: 'Active', lead_owner: CFG.LEAD_OWNER, company: CFG.COMPANY,
-    custom_role_profile: [{ role_profile_list: rp }],
+    // No role profile (e.g. a vacant employee) → create the Lead without a Sales
+    // Team row rather than an invalid empty Link row.
+    custom_role_profile: rp ? [{ role_profile_list: rp }] : [],
   }
   const latS = g(r, 'Standardize Latitude 1'), lonS = g(r, 'Standardize Longitude 1')
   const lat = parseFloat(latS), lon = parseFloat(lonS)
@@ -214,8 +216,11 @@ export function transformRow(r, empMap, existing, resolveTerritory, resolveSpeci
   }
   const e = resolveEmp(r, empMap) // Emp Code, or the id inside the Emp Name for vacant codes
   if (!e) return { kind: 'exception', code, dr, empcode: ec, empname: g(r, 'Emp Name'), hq: g(r, 'HQ'), reason: 'employee_not_found' }
+  // A resolved employee with no role profile (common for VACANT positions like
+  // V01955) still gets the Lead created — just without a Sales Team row. The role
+  // profile is backfilled later by an Update once the employee has one. (This used
+  // to be skipped as a "no_role_profile" exception.)
   const rp = (e.role_id || e.custom_role_profile || '').trim()
-  if (!rp) return { kind: 'exception', code, dr, empcode: ec, empname: g(r, 'Emp Name'), hq: g(r, 'HQ'), reason: 'no_role_profile' }
 
   // Map the sheet HQ / Speciality / Qualification onto existing Link values.
   const territory = resolveTerritory ? resolveTerritory(g(r, 'HQ')) : null
