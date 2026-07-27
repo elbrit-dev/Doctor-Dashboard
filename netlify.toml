@@ -56,6 +56,18 @@
   to = "/.netlify/functions/audit-roles"
   status = 200
 
+# List the zero-padded Leads (name starts with "DR-0").
+[[redirects]]
+  from = "/api/zero-leads"
+  to = "/.netlify/functions/zero-leads"
+  status = 200
+
+# Cascade-delete a batch of Leads by name.
+[[redirects]]
+  from = "/api/delete-leads"
+  to = "/.netlify/functions/delete-leads"
+  status = 200
+
 # Merge padded duplicate Leads into their clean form and delete the padded ones.
 [[redirects]]
   from = "/api/merge-duplicates"

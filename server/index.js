@@ -18,6 +18,7 @@ import { triage } from './triage.js'
 import { runProcess } from './process.js'
 import { runUpdate } from './updateLeads.js'
 import { runRoleAudit } from './auditRoles.js'
+import { fetchZeroLeads, runDeleteLeads } from './deleteLeads.js'
 import { runMerge } from './mergeDuplicates.js'
 import { fetchDoctorLeads } from './leadIndex.js'
 import { driveConfigured, driveStatusDetail, listFolderFiles, downloadFile } from './googleDrive.js'
@@ -222,6 +223,33 @@ app.post('/api/audit-roles', async (req, res) => {
     res.json({ source: `ERPNext · ${BASE}`, action: 'audit-roles', ...out })
   } catch (err) {
     console.error('[proxy] audit-roles failed:', err.message)
+    res.status(502).json({ error: 'ERPNext request failed', detail: err.message })
+  }
+})
+
+// List every zero-padded Lead (name starts with "DR-0"). GET → { leads }.
+app.get('/api/zero-leads', async (req, res) => {
+  if (!configured()) return res.status(503).json({ error: 'ERPNext not configured' })
+  try {
+    const leads = await fetchZeroLeads({ base: BASE, authHeaders })
+    res.json({ source: `ERPNext · ${BASE}`, count: leads.length, leads })
+  } catch (err) {
+    console.error('[proxy] zero-leads failed:', err.message)
+    res.status(502).json({ error: 'ERPNext fetch failed', detail: err.message })
+  }
+})
+
+// Cascade-delete a batch of Leads by name (linked Contacts/Addresses first, then
+// the Lead). POST { names, offset?, batchSize? }. Stateless — frontend loops.
+app.post('/api/delete-leads', async (req, res) => {
+  if (!configured()) return res.status(503).json({ error: 'ERPNext not configured' })
+  const { names, offset, batchSize } = req.body || {}
+  if (!Array.isArray(names) || names.length === 0) return res.status(400).json({ error: 'names[] is required' })
+  try {
+    const out = await runDeleteLeads({ base: BASE, authHeaders, names, offset: Number(offset) || 0, batchSize: Number(batchSize) || 40 })
+    res.json({ source: `ERPNext · ${BASE}`, action: 'delete-leads', ...out })
+  } catch (err) {
+    console.error('[proxy] delete-leads failed:', err.message)
     res.status(502).json({ error: 'ERPNext request failed', detail: err.message })
   }
 })
