@@ -23,10 +23,11 @@ npm-debug.log*
 # vite cache
 .vite/
 
-# Local data sheets (contain PII — never commit/deploy)
-public/*.xlsx
-public/*.xls
-public/*.csv
+# Local data sheets (contain PII — never commit/deploy). Ignore EVERYWHERE,
+# not just public/, so a stray sheet in the repo root can't be committed.
+*.xlsx
+*.xls
+*.csv
 
 # Local one-off report script (NOT a blanket *.mjs ignore — the Netlify
 # functions are .mjs and MUST be committed/deployed).
