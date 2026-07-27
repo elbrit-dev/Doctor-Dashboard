@@ -17,7 +17,8 @@ const strip = (c) => String(c || '').replace(/\D/g, '').replace(/^0+/, '')
 const isBlank = (v) => v == null || String(v).trim() === ''
 
 // Scalar fields backfilled from the padded Lead when the clean one is blank.
-const MERGE_FIELDS = ['custom_specialty', 'custom_qualification', 'custom_category', 'territory', 'state', 'city', 'mobile_no', 'whatsapp_no', 'phone']
+// Exported so the rename+merge tab (mergePadded.js) applies the identical rules.
+export const MERGE_FIELDS = ['custom_specialty', 'custom_qualification', 'custom_category', 'territory', 'state', 'city', 'mobile_no', 'whatsapp_no', 'phone']
 const FETCH_FIELDS = ['name', 'custom_doctor_code', ...MERGE_FIELDS, 'custom_latitude', 'custom_longitude', 'custom_latitude_and_longitude']
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -78,7 +79,7 @@ async function bulkFetchLeads(base, headers, names) {
 }
 
 // The backfill patch for one set: clean's blank fields filled from the padded.
-function computeBackfill(set, data) {
+export function computeBackfill(set, data) {
   const keep = data[set.keep]
   if (!keep) return { error: `clean ${set.keep} not found` }
   const patch = {}

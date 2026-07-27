@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { loadDoctors } from './data/source.js'
 import { IconShield } from './components/icons.jsx'
 import TriageView from './components/TriageView.jsx'
-import ZeroLeadsView from './components/ZeroLeadsView.jsx'
+import MergePaddedView from './components/MergePaddedView.jsx'
 
 export default function App() {
   // Lightweight connection probe — drives the Live/Snapshot badge and gates the
@@ -40,7 +40,7 @@ export default function App() {
       <div style={{ display: tab === 'triage' ? 'block' : 'none' }}>
         <TriageView live={live} />
       </div>
-      {tab === 'zero' && <ZeroLeadsView live={live} />}
+      {tab === 'zero' && <MergePaddedView live={live} />}
     </div>
   )
 }

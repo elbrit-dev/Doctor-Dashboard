@@ -20,6 +20,7 @@ import { runUpdate } from './updateLeads.js'
 import { runRoleAudit } from './auditRoles.js'
 import { fetchZeroLeads, runDeleteLeads, runPaddedDepartments } from './deleteLeads.js'
 import { runMerge } from './mergeDuplicates.js'
+import { fetchPaddedPairs, runMergePadded } from './mergePadded.js'
 import { fetchDoctorLeads } from './leadIndex.js'
 import { driveConfigured, driveStatusDetail, listFolderFiles, downloadFile } from './googleDrive.js'
 
@@ -280,6 +281,37 @@ app.post('/api/merge-duplicates', async (req, res) => {
     res.json({ source: `ERPNext · ${BASE}`, ...out })
   } catch (err) {
     console.error('[proxy] merge failed:', err.message)
+    res.status(502).json({ error: 'ERPNext request failed', detail: err.message })
+  }
+})
+
+// Every DR-0* Lead beside the clean DR-<code> twin it would merge into.
+// GET → { pairs }. Read-only.
+app.get('/api/padded-pairs', async (req, res) => {
+  if (!configured()) return res.status(503).json({ error: 'ERPNext not configured' })
+  try {
+    const pairs = await fetchPaddedPairs({ base: BASE, authHeaders })
+    res.json({ source: `ERPNext · ${BASE}`, count: pairs.length, pairs })
+  } catch (err) {
+    console.error('[proxy] padded-pairs failed:', err.message)
+    res.status(502).json({ error: 'ERPNext fetch failed', detail: err.message })
+  }
+})
+
+// Rename+merge padded Leads into their clean twin (backfill first, then Frappe's
+// native merge). POST { pairs, offset?, batchSize?, backfill? } — frontend loops.
+app.post('/api/merge-padded', async (req, res) => {
+  if (!configured()) return res.status(503).json({ error: 'ERPNext not configured' })
+  const { pairs, offset, batchSize, backfill } = req.body || {}
+  if (!Array.isArray(pairs) || pairs.length === 0) return res.status(400).json({ error: 'pairs[] is required' })
+  try {
+    const out = await runMergePadded({
+      base: BASE, authHeaders, pairs,
+      offset: Number(offset) || 0, batchSize: Number(batchSize) || 20, backfill: backfill !== false,
+    })
+    res.json({ source: `ERPNext · ${BASE}`, action: 'merge-padded', ...out })
+  } catch (err) {
+    console.error('[proxy] merge-padded failed:', err.message)
     res.status(502).json({ error: 'ERPNext request failed', detail: err.message })
   }
 })

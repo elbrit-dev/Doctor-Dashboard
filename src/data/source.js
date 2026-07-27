@@ -166,6 +166,29 @@ export async function mergeDuplicatesBatch({ duplicates, offset = 0, batchSize =
   return body
 }
 
+// Every DR-0* Lead beside the clean DR-<code> twin it would merge into, so the
+// Merge tab can show both sides before anything is written.
+export async function fetchPaddedPairs() {
+  const res = await fetch('/api/padded-pairs', { headers: { Accept: 'application/json' } })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`)
+  return Array.isArray(body.pairs) ? body.pairs : []
+}
+
+// Rename+merge a batch of padded Leads into their clean twin: backfill the clean
+// Lead's blank fields + role profiles, then Frappe's native merge (all linked
+// docs follow). Stateless per call — the caller drives the offset loop.
+export async function mergePaddedBatch({ pairs, offset = 0, batchSize = 20, backfill = true }) {
+  const res = await fetch('/api/merge-padded', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ pairs, offset, batchSize, backfill }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`)
+  return body
+}
+
 // Shared "Completed" sheet ids (visible to every user of the link).
 export async function getCompleted() {
   try {

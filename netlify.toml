@@ -80,6 +80,18 @@
   to = "/.netlify/functions/merge-duplicates"
   status = 200
 
+# Every DR-0* Lead beside the clean DR-<code> twin it would merge into.
+[[redirects]]
+  from = "/api/padded-pairs"
+  to = "/.netlify/functions/padded-pairs"
+  status = 200
+
+# Rename+merge padded Leads into their clean twin (Frappe's native merge).
+[[redirects]]
+  from = "/api/merge-padded"
+  to = "/.netlify/functions/merge-padded"
+  status = 200
+
 # Shared "Completed" tracking across all users (Netlify Blobs).
 [[redirects]]
   from = "/api/completed"
