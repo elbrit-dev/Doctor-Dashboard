@@ -18,7 +18,7 @@ import { triage } from './triage.js'
 import { runProcess } from './process.js'
 import { runUpdate } from './updateLeads.js'
 import { runRoleAudit } from './auditRoles.js'
-import { fetchZeroLeads, runDeleteLeads } from './deleteLeads.js'
+import { fetchZeroLeads, runDeleteLeads, runPaddedDepartments } from './deleteLeads.js'
 import { runMerge } from './mergeDuplicates.js'
 import { fetchDoctorLeads } from './leadIndex.js'
 import { driveConfigured, driveStatusDetail, listFolderFiles, downloadFile } from './googleDrive.js'
@@ -250,6 +250,21 @@ app.post('/api/delete-leads', async (req, res) => {
     res.json({ source: `ERPNext · ${BASE}`, action: 'delete-leads', ...out })
   } catch (err) {
     console.error('[proxy] delete-leads failed:', err.message)
+    res.status(502).json({ error: 'ERPNext request failed', detail: err.message })
+  }
+})
+
+// Departments of the PADDED-ONLY Leads (no clean DR-<code> twin), one row per
+// department. POST { names, offset?, batchSize? }. Stateless — frontend loops.
+app.post('/api/padded-departments', async (req, res) => {
+  if (!configured()) return res.status(503).json({ error: 'ERPNext not configured' })
+  const { names, offset, batchSize } = req.body || {}
+  if (!Array.isArray(names) || names.length === 0) return res.status(400).json({ error: 'names[] is required' })
+  try {
+    const out = await runPaddedDepartments({ base: BASE, authHeaders, names, offset: Number(offset) || 0, batchSize: Number(batchSize) || 60 })
+    res.json({ source: `ERPNext · ${BASE}`, action: 'padded-departments', ...out })
+  } catch (err) {
+    console.error('[proxy] padded-departments failed:', err.message)
     res.status(502).json({ error: 'ERPNext request failed', detail: err.message })
   }
 })

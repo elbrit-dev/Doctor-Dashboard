@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
-import { fetchZeroLeads, deleteLeadsBatch } from '../data/source.js'
+import { fetchZeroLeads, deleteLeadsBatch, paddedDepartmentsBatch } from '../data/source.js'
 import { IconDownload } from './icons.jsx'
 
 const PAGE = 40 // display + delete batch size
@@ -20,6 +20,11 @@ export default function ZeroLeadsView({ live }) {
   const [running, setRunning] = useState(false)
   const [prog, setProg] = useState(null)   // { processed, total }
   const [report, setReport] = useState(null) // { counts, errors }
+
+  // Department export (padded-only leads) state.
+  const [deptRunning, setDeptRunning] = useState(false)
+  const [deptProg, setDeptProg] = useState(null) // { processed, total }
+  const [deptInfo, setDeptInfo] = useState(null)  // { paddedOnly, rows } after a run
 
   const load = async () => {
     setPhase('loading'); setError(null)
@@ -107,6 +112,42 @@ export default function ZeroLeadsView({ live }) {
     XLSX.writeFile(wb, `zero-padded-leads-${new Date().toISOString().slice(0, 10)}.xlsx`)
   }
 
+  // Scan every DR-0 lead, keep only the PADDED-ONLY ones (no clean DR-<code>
+  // twin), read ALL their role-profile departments, and download one row per
+  // (lead × department). Batched (60/call); the frontend drives the loop.
+  const exportDepartments = async () => {
+    const names = rows.map((l) => l.name)
+    if (deptRunning || names.length === 0) return
+    setDeptRunning(true); setError(null); setDeptInfo(null)
+    const total = names.length
+    setDeptProg({ processed: 0, total })
+    const counts = { scanned: 0, paddedOnly: 0, hasTwin: 0, errors: 0 }
+    const out = []
+    try {
+      let offset = 0
+      while (offset < names.length) {
+        // eslint-disable-next-line no-await-in-loop
+        const res = await paddedDepartmentsBatch({ names, offset, batchSize: 60 })
+        for (const k in counts) counts[k] += res.counts?.[k] || 0
+        out.push(...(res.rows || []))
+        offset = res.nextOffset == null ? names.length : res.nextOffset
+        setDeptProg({ processed: Math.min(offset, total), total })
+        setDeptInfo({ paddedOnly: counts.paddedOnly, rows: out.length })
+      }
+      const wb = XLSX.utils.book_new()
+      const data = out.map((r) => ({
+        'Lead ID': r.leadName, 'Doctor Code': r.code, Doctor: r.doctor || '',
+        Department: r.department || '(none)', 'Role Profile': r.roleProfile || '', HQ: r.hq || '',
+      }))
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.length ? data : [{ Note: 'No padded-only leads' }]), 'Padded-only departments')
+      XLSX.writeFile(wb, `padded-only-departments-${new Date().toISOString().slice(0, 10)}.xlsx`)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setDeptRunning(false); setDeptProg(null)
+    }
+  }
+
   if (!live) {
     return (
       <div className="card" style={{ padding: 24 }}>
@@ -148,8 +189,13 @@ export default function ZeroLeadsView({ live }) {
               {deleted.size > 0 ? ` · ${deleted.size} deleted` : ''}
             </span>
             <div className="filterbar__spacer" />
-            {rows.length > 0 && <button className="export-btn" onClick={exportList}><IconDownload width={15} height={15} /> Export</button>}
-            <button className="btn btn--error" disabled={running || selCount === 0} onClick={runDelete}>
+            {rows.length > 0 && <button className="export-btn" onClick={exportList}><IconDownload width={15} height={15} /> Export list</button>}
+            {rows.length > 0 && (
+              <button className="export-btn" onClick={exportDepartments} disabled={deptRunning || running} title="Scan the padded-only leads (no clean DR-<code> twin) and download all their departments — one row per department">
+                <IconDownload width={15} height={15} /> {deptRunning ? 'Fetching depts…' : 'Export departments (padded-only)'}
+              </button>
+            )}
+            <button className="btn btn--error" disabled={running || deptRunning || selCount === 0} onClick={runDelete}>
               {running ? 'Deleting…' : `Delete selected · ${selCount}`}
             </button>
           </div>
@@ -161,6 +207,18 @@ export default function ZeroLeadsView({ live }) {
               </div>
               <p className="card__hint" style={{ margin: '6px 0 0' }}>
                 {running ? 'Deleting' : 'Done'} — {prog.processed}/{prog.total} ({pct}%)
+              </p>
+            </div>
+          )}
+
+          {deptProg && (
+            <div style={{ padding: '0 8px 8px' }}>
+              <div style={{ height: 10, borderRadius: 6, background: 'rgba(148,163,184,.25)', overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${deptProg.total ? Math.round((deptProg.processed / deptProg.total) * 100) : 0}%`, background: 'var(--accent, #2563eb)', transition: 'width .25s ease' }} />
+              </div>
+              <p className="card__hint" style={{ margin: '6px 0 0' }}>
+                Scanning departments — {deptProg.processed}/{deptProg.total}
+                {deptInfo ? ` · ${deptInfo.paddedOnly} padded-only · ${deptInfo.rows} dept rows` : ''}
               </p>
             </div>
           )}

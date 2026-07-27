@@ -68,6 +68,12 @@
   to = "/.netlify/functions/delete-leads"
   status = 200
 
+# Departments of the padded-only Leads (no clean twin), one row per department.
+[[redirects]]
+  from = "/api/padded-departments"
+  to = "/.netlify/functions/padded-departments"
+  status = 200
+
 # Merge padded duplicate Leads into their clean form and delete the padded ones.
 [[redirects]]
   from = "/api/merge-duplicates"

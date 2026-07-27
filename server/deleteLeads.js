@@ -91,6 +91,53 @@ async function deleteLead(base, headers, leadName) {
   return { ...r, removed }
 }
 
+// The stripped numeric code embedded in a padded Lead name (DR-00072078 → 72078).
+const codeOf = (n) => (String(n ?? '').replace(/^DR-?/i, '').replace(/^0+/, '') || '0')
+
+// For a batch of padded (DR-0) Lead names, keep only the PADDED-ONLY ones (whose
+// clean DR-<code> twin does NOT exist), then read each one's role-profile
+// departments. Returns one row per (lead × department) — a lead with no
+// department yields a single blank-department row so it still appears.
+// { base, authHeaders, names[], offset, batchSize, concurrency }
+export async function runPaddedDepartments({ base, authHeaders, names, offset = 0, batchSize = 60, concurrency = 8 }) {
+  if (!Array.isArray(names) || names.length === 0) throw new Error('names[] is required')
+  const headers = { ...authHeaders, Accept: 'application/json' }
+  const batch = names.slice(offset, offset + batchSize)
+
+  // Which clean twins (DR-<code>) exist for this batch — one bulk query per chunk.
+  const cleanNames = [...new Set(batch.map((n) => `DR-${codeOf(n)}`))]
+  const existingClean = new Set()
+  const CH = 90
+  for (let i = 0; i < cleanNames.length; i += CH) {
+    const filters = encodeURIComponent(JSON.stringify([['name', 'in', cleanNames.slice(i, i + CH)]]))
+    // eslint-disable-next-line no-await-in-loop
+    const j = await getJSON(`${base}/api/resource/Lead?fields=${encodeURIComponent('["name"]')}&filters=${filters}&limit_page_length=0`, headers, 'clean-twin check')
+    for (const l of (j.data || [])) existingClean.add(l.name)
+  }
+  const paddedOnly = batch.filter((n) => !existingClean.has(`DR-${codeOf(n)}`))
+
+  const counts = { scanned: 0, paddedOnly: paddedOnly.length, hasTwin: batch.length - paddedOnly.length, errors: 0 }
+  const rows = []
+  await mapLimit(paddedOnly, concurrency, async (name) => {
+    let doc
+    try {
+      const j = await getJSON(`${base}/api/resource/Lead/${encodeURIComponent(name)}`, headers, `Lead ${name}`)
+      doc = j.data
+    } catch { counts.errors++; return }
+    counts.scanned++
+    const roles = Array.isArray(doc.custom_role_profile) ? doc.custom_role_profile : []
+    const depts = roles
+      .map((r) => ({ department: String(r.department ?? '').trim(), roleProfile: String(r.role_profile_list ?? '').trim(), hq: String(r.hq ?? '').trim() }))
+      .filter((d) => d.department)
+    const base2 = { leadName: name, code: codeOf(name), doctor: doc.lead_name || doc.first_name || '' }
+    if (depts.length) for (const d of depts) rows.push({ ...base2, ...d })
+    else rows.push({ ...base2, department: '', roleProfile: '', hq: '' })
+  })
+
+  const done = offset + batchSize >= names.length
+  return { processed: batch.length, nextOffset: done ? null : offset + batchSize, done, total: names.length, counts, rows }
+}
+
 // { base, authHeaders, names[], offset, batchSize, concurrency }
 export async function runDeleteLeads({ base, authHeaders, names, offset = 0, batchSize = 40, concurrency = 6 }) {
   if (!Array.isArray(names) || names.length === 0) throw new Error('names[] is required')

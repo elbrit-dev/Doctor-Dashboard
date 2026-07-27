@@ -140,6 +140,19 @@ export async function deleteLeadsBatch({ names, offset = 0, batchSize = 40 }) {
   return body
 }
 
+// Departments of the PADDED-ONLY Leads (no clean twin). Stateless per call —
+// the caller sends the full names[] and drives the offset loop.
+export async function paddedDepartmentsBatch({ names, offset = 0, batchSize = 60 }) {
+  const res = await fetch('/api/padded-departments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ names, offset, batchSize }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`)
+  return body
+}
+
 // Merge padded duplicate Leads into their clean form (moving addresses) and
 // delete the padded ones. Stateless per call — caller drives the offset loop.
 export async function mergeDuplicatesBatch({ duplicates, offset = 0, batchSize = 20 }) {
