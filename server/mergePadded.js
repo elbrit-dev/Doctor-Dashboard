@@ -84,14 +84,19 @@ export async function fetchPaddedPairs({ base, authHeaders }) {
   const padded = await listLeads(base, headers, [['name', 'like', 'DR-0%']], 'Padded lead list')
 
   // Which clean twins actually exist — bulk, chunked so the IN(...) URL stays short.
+  // There are ~6k padded ids, so this is ~70 chunk queries; running them SEQUENTIALLY
+  // took 10–15s and blew past the serverless time limit (502 on /api/padded-pairs).
+  // The chunks are independent, so fetch them CONCURRENTLY (bounded) — a couple of
+  // seconds instead of a couple of minutes, without hammering ERP.
   const wanted = [...new Set(padded.map((l) => `DR-${codeOf(l.name)}`))]
   const cleanByName = {}
   const CH = 90
-  for (let i = 0; i < wanted.length; i += CH) {
-    // eslint-disable-next-line no-await-in-loop
-    const found = await listLeads(base, headers, [['name', 'in', wanted.slice(i, i + CH)]], 'Clean twin lookup')
+  const chunks = []
+  for (let i = 0; i < wanted.length; i += CH) chunks.push(wanted.slice(i, i + CH))
+  await mapLimit(chunks, 8, async (names) => {
+    const found = await listLeads(base, headers, [['name', 'in', names]], 'Clean twin lookup')
     for (const l of found) cleanByName[l.name] = l
-  }
+  })
 
   return padded.map((l) => {
     const code = codeOf(l.name)
