@@ -4,7 +4,9 @@ import { fetchPaddedPairs, mergePaddedBatch } from '../data/source.js'
 import { IconDownload } from './icons.jsx'
 
 const PAGE = 40      // rows per page
-const BATCH = 20     // pairs per server call
+const BATCH = 5      // pairs per server call — small so each call finishes well
+                     // inside Netlify's function time limit (each merge hits ERP
+                     // ~4×; 20/call was timing out with 502/504)
 const RUN_CAP = 200  // how many mergeable Leads one "Merge next N" click processes
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -83,7 +85,7 @@ export default function MergePaddedView({ live }) {
   const runMerge = async (list) => {
     if (running || list.length === 0) return
     const total = list.length
-    const counts = { merged: 0, errors: 0, fieldsFilled: 0, rolesAdded: 0, unverified: 0 }
+    const counts = { merged: 0, alreadyGone: 0, errors: 0, fieldsFilled: 0, rolesAdded: 0, unverified: 0 }
     const ok = new Map(done)
     const bad = new Map(failed)
     setRunning(true); setError(null); setProg({ processed: 0, total }); setReport({ counts: { ...counts } })
@@ -254,8 +256,10 @@ export default function MergePaddedView({ live }) {
           {c && (
             <p className="card__hint" style={{ padding: '0 8px 8px' }}>
               Merged <b>{c.merged}</b> Lead(s) · {c.fieldsFilled} field(s) backfilled · {c.rolesAdded} role row(s) added
+              {c.alreadyGone ? <> · {c.alreadyGone} already merged (padded id gone)</> : ''}
               {c.unverified ? <> · <span className="sev-error">{c.unverified} still resolve under the padded id</span></> : ''}
               {c.errors ? <> · <span className="sev-error">{c.errors} failed</span></> : ''}.
+              {(c.alreadyGone || c.merged) ? <> <b>Refresh</b> to drop merged rows from the list.</> : ''}
             </p>
           )}
 
@@ -301,12 +305,18 @@ export default function MergePaddedView({ live }) {
                           <td>{x.hasClean ? (x.cleanTerritory || '—') : '—'}</td>
                           <td style={{ whiteSpace: 'normal', maxWidth: 260 }}>
                             {okr ? (
-                              <span style={{ color: 'var(--ok)' }} title={`via ${okr.via || 'rename'}`}>
-                                ✓ Merged
-                                {okr.filled?.length ? ` · ${okr.filled.length} field(s)` : ''}
-                                {okr.rolesAdded ? ` · +${okr.rolesAdded} role` : ''}
-                                {okr.verified === false ? ' · id still resolves' : ''}
-                              </span>
+                              okr.alreadyGone ? (
+                                <span style={{ color: 'var(--ok)' }} title="The padded id no longer exists in ERP">
+                                  ✓ Already merged — padded id gone
+                                </span>
+                              ) : (
+                                <span style={{ color: 'var(--ok)' }} title={`via ${okr.via || 'rename'}`}>
+                                  ✓ Merged
+                                  {okr.filled?.length ? ` · ${okr.filled.length} field(s)` : ''}
+                                  {okr.rolesAdded ? ` · +${okr.rolesAdded} role` : ''}
+                                  {okr.verified === false ? ' · id still resolves' : ''}
+                                </span>
+                              )
                             ) : bad ? (
                               <span className="sev-error">✕ {bad.stage || 'merge'}: {bad.error}</span>
                             ) : x.hasClean ? (

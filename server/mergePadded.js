@@ -171,11 +171,26 @@ async function mergeOne(base, headers, pair, backfill) {
   const { padded, clean } = pair
   const out = { padded, clean, code: codeOf(padded), filled: [], rolesAdded: 0 }
 
-  let keepDoc, remDoc
+  // Read the padded Lead first. If it 404s, the padded id is ALREADY gone — a
+  // previous merge (or a timed-out batch that actually landed) handled it. The
+  // whole point of the merge is that the padded id stops existing, so that goal
+  // is already met: report success ("already merged"), never a red failure.
+  let remDoc
   try {
-    ;[keepDoc, remDoc] = await Promise.all([fullDoc(base, headers, clean), fullDoc(base, headers, padded)])
+    remDoc = await fullDoc(base, headers, padded)
   } catch (e) {
+    if (/HTTP 404/.test(e.message)) return { ...out, ok: true, alreadyGone: true, verified: true }
     return { ...out, ok: false, stage: 'read', error: e.message }
+  }
+
+  // The clean twin must exist to merge into. If the list was stale and it's gone,
+  // say so plainly rather than as a generic read error.
+  let keepDoc
+  try {
+    keepDoc = await fullDoc(base, headers, clean)
+  } catch (e) {
+    const missing = /HTTP 404/.test(e.message)
+    return { ...out, ok: false, stage: 'read', error: missing ? `clean twin ${clean} not found — Refresh the list` : e.message }
   }
 
   if (backfill) {
@@ -206,12 +221,12 @@ async function mergeOne(base, headers, pair, backfill) {
 }
 
 // { base, authHeaders, pairs:[{padded,clean}], offset, batchSize, concurrency, backfill }
-export async function runMergePadded({ base, authHeaders, pairs, offset = 0, batchSize = 20, concurrency = 5, backfill = true }) {
+export async function runMergePadded({ base, authHeaders, pairs, offset = 0, batchSize = 5, concurrency = 5, backfill = true }) {
   if (!Array.isArray(pairs) || pairs.length === 0) throw new Error('pairs[] is required')
   const headers = { ...authHeaders, Accept: 'application/json' }
   const batch = pairs.slice(offset, offset + batchSize)
 
-  const counts = { merged: 0, errors: 0, fieldsFilled: 0, rolesAdded: 0, unverified: 0 }
+  const counts = { merged: 0, alreadyGone: 0, errors: 0, fieldsFilled: 0, rolesAdded: 0, unverified: 0 }
   const results = []
 
   await mapLimit(batch, concurrency, async (pair) => {
@@ -220,9 +235,12 @@ export async function runMergePadded({ base, authHeaders, pairs, offset = 0, bat
     }
     const r = await mergeOne(base, headers, pair, backfill !== false)
     if (r.ok) {
-      counts.merged++
-      counts.fieldsFilled += r.filled.length
-      counts.rolesAdded += r.rolesAdded
+      if (r.alreadyGone) counts.alreadyGone++
+      else {
+        counts.merged++
+        counts.fieldsFilled += (r.filled || []).length
+        counts.rolesAdded += r.rolesAdded || 0
+      }
       if (r.verified === false) counts.unverified++
     } else counts.errors++
     results.push(r)
