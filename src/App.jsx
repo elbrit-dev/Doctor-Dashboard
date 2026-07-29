@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { loadDoctors } from './data/source.js'
 import { IconShield } from './components/icons.jsx'
 import TriageView from './components/TriageView.jsx'
-import MergePaddedView from './components/MergePaddedView.jsx'
 
 export default function App() {
   // Lightweight connection probe — drives the Live/Snapshot badge and gates the
@@ -13,7 +12,6 @@ export default function App() {
   }, [])
 
   const live = conn.mode === 'live'
-  const [tab, setTab] = useState('triage') // 'triage' | 'zero'
 
   return (
     <div className="app">
@@ -30,17 +28,7 @@ export default function App() {
         </div>
       </header>
 
-      <div className="segmented" style={{ marginBottom: 18 }}>
-        <button className={tab === 'triage' ? 'active' : ''} onClick={() => setTab('triage')}>Create / Update</button>
-        <button className={tab === 'zero' ? 'active' : ''} onClick={() => setTab('zero')}>Zero-padded IDs</button>
-      </div>
-
-      {/* Keep TriageView mounted (its long triage state shouldn't reset when
-          switching tabs); just hide it when the other tab is active. */}
-      <div style={{ display: tab === 'triage' ? 'block' : 'none' }}>
-        <TriageView live={live} />
-      </div>
-      {tab === 'zero' && <MergePaddedView live={live} />}
+      <TriageView live={live} />
     </div>
   )
 }
