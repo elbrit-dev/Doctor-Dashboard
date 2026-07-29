@@ -76,7 +76,11 @@ export default function DeactivateView({ live }) {
       // deep: the sheet for this run sits in a sub-folder, not the folder root.
       const { configured, files, detail } = await listFolderFiles({ deep: true })
       if (!configured) { setDriveError(detail || 'Drive folder not configured on the server.'); setDriveState('not-configured'); return }
-      setDriveFiles(files); setDriveState('ready')
+      // SUB-FOLDERS ONLY. The folder root holds the division sheets that belong to
+      // the Create/Update tab — listing them here just invites loading the wrong
+      // file. Retirement lists arrive as their own sub-folder ("Deleted List"),
+      // and a future one will show up here on its own.
+      setDriveFiles(files.filter((f) => f.folder)); setDriveState('ready')
     } catch (err) {
       setDriveError(err.message); setDriveState('error')
     }
@@ -292,8 +296,9 @@ export default function DeactivateView({ live }) {
           <div>
             <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>Deactivate doctors</h3>
             <p className="card__hint" style={{ margin: 0 }}>
-              Load the sheet listing the doctors to retire — it can sit in a sub-folder of the shared Drive
-              folder. Each <b>Doctor Code</b> is matched to its Lead <b>with and without the zero padding</b>
+              Load the sheet listing the doctors to retire. The picker below shows only the shared Drive
+              folder's <b>sub-folders</b> — the division sheets in its root belong to the Create / Update tab.
+              Each <b>Doctor Code</b> is matched to its Lead <b>with and without the zero padding</b>
               {' '}(<code>00075529</code> → <code>DR-75529</code> or <code>DR-00075529</code>, and both ways on{' '}
               <code>custom_doctor_code</code>). Every match is listed for review first; a button then sets
               {' '}<b>Status → Inactive</b> and nothing else. <b>Deactivate next N</b> processes N at a time,
@@ -551,18 +556,17 @@ function Pager({ page, pages, total, running, setPage, extra }) {
   )
 }
 
-// The shared Drive folder AND its sub-folders, so a sheet dropped in a new
-// sub-folder shows up without any config change. Grouped by folder.
+// The sheets inside the shared folder's SUB-FOLDERS, grouped by folder. The
+// folder root is deliberately absent — those are the division sheets the
+// Create/Update tab works from. A new retirement folder needs no config change.
 function FilePicker({ state, files, error, openingId, busy, collapsed, onToggle, onRefresh, onOpen }) {
   const groups = useMemo(() => {
     const m = new Map()
     for (const f of files || []) {
-      const k = f.folder || ''
-      if (!m.has(k)) m.set(k, [])
-      m.get(k).push(f)
+      if (!m.has(f.folder)) m.set(f.folder, [])
+      m.get(f.folder).push(f)
     }
-    // Sub-folders first (that's where new work lands), root files last.
-    return [...m.entries()].sort((a, b) => (a[0] ? (b[0] ? a[0].localeCompare(b[0]) : -1) : 1))
+    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]))
   }, [files])
   const canCollapse = state === 'ready' && (files || []).length > 0
 
@@ -580,7 +584,7 @@ function FilePicker({ state, files, error, openingId, busy, collapsed, onToggle,
             <span style={{ transition: 'transform .15s ease', transform: collapsed ? 'rotate(180deg)' : 'none', fontSize: 12, color: 'var(--muted, #64748b)' }}>▲</span>
           )}
           <span className="section-label" style={{ margin: 0 }}>
-            Sheets — Drive folder + sub-folders{state === 'ready' ? ` (${(files || []).length})` : ''}
+            Retirement sheets — Drive sub-folders{state === 'ready' ? ` (${(files || []).length})` : ''}
           </span>
         </button>
         <div className="filterbar__spacer" />
@@ -612,7 +616,8 @@ function FilePicker({ state, files, error, openingId, busy, collapsed, onToggle,
       {!collapsed && state === 'ready' && (
         (files || []).length === 0 ? (
           <p className="card__hint" style={{ padding: '4px 8px 10px' }}>
-            No sheets in the folder — or it isn't shared with this Google account.
+            No sheets in any sub-folder of the shared Drive folder. The division sheets in the folder root
+            belong to the Create / Update tab and aren't listed here — use <b>Upload sheet</b> for a one-off.
           </p>
         ) : (
           <div className="table-wrap">
@@ -625,7 +630,7 @@ function FilePicker({ state, files, error, openingId, busy, collapsed, onToggle,
                   <Fragment key={folder || '(root)'}>
                     <tr>
                       <td colSpan={3} className="section-label" style={{ paddingTop: 10 }}>
-                        {folder ? `📁 ${folder}` : 'Folder root'} ({list.length})
+                        📁 {folder} ({list.length})
                       </td>
                     </tr>
                     {list.map((f) => (
