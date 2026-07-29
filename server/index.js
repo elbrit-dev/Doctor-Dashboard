@@ -21,8 +21,9 @@ import { runRoleAudit } from './auditRoles.js'
 import { fetchZeroLeads, runDeleteLeads, runPaddedDepartments } from './deleteLeads.js'
 import { runMerge } from './mergeDuplicates.js'
 import { fetchPaddedPairs, runMergePadded } from './mergePadded.js'
-import { fetchDoctorLeads } from './leadIndex.js'
-import { driveConfigured, driveStatusDetail, listFolderFiles, downloadFile } from './googleDrive.js'
+import { fetchDoctorLeads, fetchLeadStatusIndex } from './leadIndex.js'
+import { runDeactivate } from './deactivate.js'
+import { driveConfigured, driveStatusDetail, listFolderFiles, listSheetsDeep, downloadFile } from './googleDrive.js'
 
 const PORT = process.env.PROXY_PORT || 8787
 const BASE = (process.env.ERPNEXT_URL || '').replace(/\/+$/, '')
@@ -316,6 +317,35 @@ app.post('/api/merge-padded', async (req, res) => {
   }
 })
 
+// Every doctor Lead as a compact [name, doctorCode, status] triple, so the browser
+// can match a whole retirement sheet locally (tens of thousands of codes) instead
+// of asking ERP per code. GET → { leads, count }. Read-only.
+app.get('/api/lead-index', async (req, res) => {
+  if (!configured()) return res.status(503).json({ error: 'ERPNext not configured' })
+  try {
+    const leads = await fetchLeadStatusIndex(BASE, authHeaders)
+    res.json({ source: `ERPNext · ${BASE}`, fetchedAt: new Date().toISOString(), count: leads.length, leads })
+  } catch (err) {
+    console.error('[proxy] lead-index failed:', err.message)
+    res.status(502).json({ error: 'ERPNext fetch failed', detail: err.message })
+  }
+})
+
+// Set status = "Inactive" on a batch of Leads by name.
+// POST { names, offset?, batchSize? } — the frontend drives the offset loop.
+app.post('/api/deactivate', async (req, res) => {
+  if (!configured()) return res.status(503).json({ error: 'ERPNext not configured' })
+  const { names, offset, batchSize } = req.body || {}
+  if (!Array.isArray(names) || names.length === 0) return res.status(400).json({ error: 'names[] is required' })
+  try {
+    const out = await runDeactivate({ base: BASE, authHeaders, names, offset: Number(offset) || 0, batchSize: Number(batchSize) || 40 })
+    res.json({ source: `ERPNext · ${BASE}`, action: 'deactivate', ...out })
+  } catch (err) {
+    console.error('[proxy] deactivate failed:', err.message)
+    res.status(502).json({ error: 'ERPNext request failed', detail: err.message })
+  }
+})
+
 // ── Shared "Completed" tracking (dev: a JSON file; prod: Netlify Blobs) ──────
 const COMPLETED_FILE = new URL('./completed.json', import.meta.url)
 const readCompleted = () => { try { return JSON.parse(readFileSync(COMPLETED_FILE, 'utf8')) } catch { return [] } }
@@ -334,12 +364,14 @@ app.post('/api/completed', (req, res) => {
 
 // ── Google Drive (server-side; no per-user login) ───────────────────────────
 // List the shared folder's sheets. Returns { configured, files }.
+// ?deep=1 also walks one level of sub-folders (each file gets a `folder` name).
 app.get('/api/drive/files', async (req, res) => {
   if (!driveConfigured()) {
     return res.status(200).json({ configured: false, detail: driveStatusDetail(), files: [] })
   }
   try {
-    const files = await listFolderFiles()
+    const deep = req.query.deep === '1' || req.query.deep === 'true'
+    const files = deep ? await listSheetsDeep() : await listFolderFiles()
     res.json({ configured: true, files })
   } catch (err) {
     console.error('[proxy] drive list failed:', err.message)

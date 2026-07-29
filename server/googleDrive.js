@@ -30,6 +30,7 @@ const SA_FILE = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE || ''
 
 const SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+const FOLDER_MIME = 'application/vnd.google-apps.folder'
 const ACCEPTED = new Set([SHEET_MIME, XLSX_MIME, 'application/vnd.ms-excel', 'text/csv'])
 const SCOPE = 'https://www.googleapis.com/auth/drive.readonly'
 
@@ -94,13 +95,11 @@ async function authFor() {
   return { headers: {}, keyParam: `&key=${encodeURIComponent(API_KEY)}` }
 }
 
-// List the accepted sheet files (Google Sheets / .xlsx / .xls / .csv) directly
-// inside the configured folder.
-export async function listFolderFiles() {
-  if (!driveConfigured()) throw new Error(driveStatusDetail() || 'Google Drive not configured.')
+// Every child of one folder (files AND sub-folders), unfiltered.
+async function listChildren(folderId) {
   const { headers, keyParam } = await authFor()
   const params = new URLSearchParams({
-    q: `'${FOLDER_ID}' in parents and trashed = false`,
+    q: `'${folderId}' in parents and trashed = false`,
     fields: 'files(id,name,mimeType,modifiedTime,size)',
     orderBy: 'name',
     pageSize: '200',
@@ -110,7 +109,35 @@ export async function listFolderFiles() {
   const res = await fetch(`https://www.googleapis.com/drive/v3/files?${params}${keyParam}`, { headers })
   if (!res.ok) throw new Error(`Google Drive list failed: HTTP ${res.status} ${await res.text().catch(() => '')}`)
   const json = await res.json()
-  return (json.files || []).filter((f) => ACCEPTED.has(f.mimeType) || /\.(xlsx|xls|csv)$/i.test(f.name || ''))
+  return json.files || []
+}
+
+const isSheet = (f) => ACCEPTED.has(f.mimeType) || /\.(xlsx|xls|csv)$/i.test(f.name || '')
+
+// List the accepted sheet files (Google Sheets / .xlsx / .xls / .csv) directly
+// inside the configured folder.
+export async function listFolderFiles() {
+  if (!driveConfigured()) throw new Error(driveStatusDetail() || 'Google Drive not configured.')
+  return (await listChildren(FOLDER_ID)).filter(isSheet)
+}
+
+// Same, plus the sheets sitting inside each IMMEDIATE sub-folder — each tagged
+// with the folder it came from (`folder` is '' for the shared folder's own
+// files). New work arrives as a new sub-folder in the same shared folder, so the
+// picker has to see one level down; deeper nesting has never been used.
+export async function listSheetsDeep() {
+  if (!driveConfigured()) throw new Error(driveStatusDetail() || 'Google Drive not configured.')
+  const children = await listChildren(FOLDER_ID)
+  const folders = children.filter((f) => f.mimeType === FOLDER_MIME)
+  const nested = await Promise.all(folders.map(async (fo) => {
+    // One bad sub-folder (permissions, etc.) must not blank the whole list.
+    const files = await listChildren(fo.id).catch(() => [])
+    return files.filter(isSheet).map((f) => ({ ...f, folder: fo.name, folderId: fo.id }))
+  }))
+  return [
+    ...children.filter(isSheet).map((f) => ({ ...f, folder: '', folderId: FOLDER_ID })),
+    ...nested.flat(),
+  ]
 }
 
 // Download one file's bytes. Google Sheets are exported to .xlsx; other sheet

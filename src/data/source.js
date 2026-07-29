@@ -189,6 +189,29 @@ export async function mergePaddedBatch({ pairs, offset = 0, batchSize = 20, back
   return body
 }
 
+// Every doctor Lead as a compact [name, doctorCode, status] triple. One request;
+// the padded/clean code matching then happens locally (src/lib/matchCodes.js),
+// because a retirement sheet can list ~47k codes. Read-only.
+export async function fetchLeadIndex() {
+  const res = await fetch('/api/lead-index', { headers: { Accept: 'application/json' } })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`)
+  return { leads: Array.isArray(body.leads) ? body.leads : [], fetchedAt: body.fetchedAt || null }
+}
+
+// Set status = "Inactive" on a batch of Leads by name. Stateless per call — the
+// caller sends the full names[] and drives the offset loop.
+export async function deactivateBatch({ names, offset = 0, batchSize = 40 }) {
+  const res = await fetch('/api/deactivate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ names, offset, batchSize }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`)
+  return body
+}
+
 // Shared "Completed" sheet ids (visible to every user of the link).
 export async function getCompleted() {
   try {

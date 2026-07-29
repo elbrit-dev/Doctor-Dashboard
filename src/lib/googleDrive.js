@@ -4,8 +4,10 @@
 // there is no Google popup, consent, or OAuth token here anymore.
 
 // List the sheets in the shared folder. Returns { configured, files, detail? }.
-export async function listFolderFiles() {
-  const res = await fetch('/api/drive/files', { headers: { Accept: 'application/json' } })
+// `deep` also returns the sheets inside each sub-folder, each carrying the
+// `folder` name it came from — new batches of work arrive as a new sub-folder.
+export async function listFolderFiles({ deep = false } = {}) {
+  const res = await fetch(`/api/drive/files${deep ? '?deep=1' : ''}`, { headers: { Accept: 'application/json' } })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`)
   return { configured: body.configured !== false, files: body.files || [], detail: body.detail || null }

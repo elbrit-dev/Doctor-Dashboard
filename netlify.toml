@@ -92,6 +92,18 @@
   to = "/.netlify/functions/merge-padded"
   status = 200
 
+# Compact [name, doctorCode, status] index of every doctor Lead (read-only).
+[[redirects]]
+  from = "/api/lead-index"
+  to = "/.netlify/functions/lead-index"
+  status = 200
+
+# Set status = "Inactive" on a batch of Leads by name.
+[[redirects]]
+  from = "/api/deactivate"
+  to = "/.netlify/functions/deactivate"
+  status = 200
+
 # Shared "Completed" tracking across all users (Netlify Blobs).
 [[redirects]]
   from = "/api/completed"
